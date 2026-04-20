@@ -61,6 +61,10 @@ export const zh: Translations = {
       skills: "技能",
       config: "配置",
       keys: "密钥",
+      chat: "对话",
+      space: "文件空间",
+      mySkills: "我的技能",
+      publicSkills: "公共技能",
     },
   },
 

@@ -30,6 +30,12 @@ edge-tts
 # Optional: For cron expression parsing (cronjob scheduling)
 croniter
 
+# Enterprise API layer
+fastapi>=0.115
+uvicorn[standard]>=0.30
+passlib[bcrypt]>=1.7.4
+python-multipart>=0.0.9
+
 # Optional: For messaging platform integrations (gateway)
 python-telegram-bot[webhooks]>=22.6
 discord.py>=2.0

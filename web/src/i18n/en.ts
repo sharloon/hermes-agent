@@ -61,6 +61,10 @@ export const en: Translations = {
       skills: "Skills",
       config: "Config",
       keys: "Keys",
+      chat: "Chat",
+      space: "Files",
+      mySkills: "My Skills",
+      publicSkills: "Public Skills",
     },
   },
 

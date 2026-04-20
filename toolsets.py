@@ -48,6 +48,8 @@ _HERMES_CORE_TOOLS = [
     "text_to_speech",
     # Planning & memory
     "todo", "memory",
+    # User private file space (enterprise API mode)
+    "list_user_files", "read_user_file",
     # Session history search
     "session_search",
     # Clarifying questions

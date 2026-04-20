@@ -4434,7 +4434,7 @@ def _coalesce_session_name_args(argv: list) -> list:
         "chat", "model", "gateway", "setup", "whatsapp", "login", "logout", "auth",
         "status", "cron", "doctor", "config", "pairing", "skills", "tools",
         "mcp", "sessions", "insights", "version", "update", "uninstall",
-        "profile", "dashboard",
+        "profile", "dashboard", "api-server",
         "honcho", "claw", "plugins", "acp",
         "webhook", "memory", "dump", "debug", "backup", "import", "completion", "logs",
     }
@@ -4733,6 +4733,37 @@ def cmd_dashboard(args):
         port=args.port,
         open_browser=not args.no_open,
         allow_public=getattr(args, "insecure", False),
+    )
+
+
+def cmd_api_server(args):
+    """Start the enterprise REST API server."""
+    try:
+        import fastapi  # noqa: F401
+        import uvicorn
+    except ImportError:
+        print("API server dependencies not installed.")
+        print("Install them with:  pip install fastapi uvicorn[standard]")
+        sys.exit(1)
+
+    import os
+    secret = os.getenv("HERMES_SECRET_KEY", "")
+    if not secret or secret == "change-me-in-production-please":
+        print("WARNING: HERMES_SECRET_KEY is not set. Using an insecure default key.")
+        print("Set it with:  export HERMES_SECRET_KEY=$(openssl rand -hex 32)")
+
+    host = args.host
+    port = args.port
+    print(f"Starting Hermes Enterprise API on http://{host}:{port}")
+    print(f"  Interactive docs: http://{host}:{port}/docs")
+    print(f"  Press Ctrl+C to stop")
+
+    uvicorn.run(
+        "api.main:app",
+        host=host,
+        port=port,
+        reload=getattr(args, "reload", False),
+        log_level="info",
     )
 
 
@@ -6260,6 +6291,36 @@ Examples:
         help="Allow binding to non-localhost (DANGEROUS: exposes API keys on the network)",
     )
     dashboard_parser.set_defaults(func=cmd_dashboard)
+
+    # =========================================================================
+    # api-server command
+    # =========================================================================
+    api_parser = subparsers.add_parser(
+        "api-server",
+        help="Start the enterprise REST API server",
+        description=(
+            "Launch the Hermes Agent enterprise API server.\n"
+            "Provides multi-user auth, private file space, conversation history,\n"
+            "and private/public Skills management.\n\n"
+            "Requires HERMES_SECRET_KEY and ANTHROPIC_API_KEY environment variables."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""\
+Examples:
+    hermes api-server                          Start on http://127.0.0.1:8000
+    hermes api-server --port 8080              Custom port
+    hermes api-server --host 0.0.0.0           Bind all interfaces
+    hermes api-server --reload                 Auto-reload on code changes (dev)
+
+Environment variables:
+    HERMES_SECRET_KEY   JWT signing secret (required in production)
+    ANTHROPIC_API_KEY   Claude API key for AI conversations
+""",
+    )
+    api_parser.add_argument("--port", type=int, default=8000, help="Port (default 8000)")
+    api_parser.add_argument("--host", default="127.0.0.1", help="Host (default 127.0.0.1)")
+    api_parser.add_argument("--reload", action="store_true", help="Auto-reload on file changes (development)")
+    api_parser.set_defaults(func=cmd_api_server)
 
     # =========================================================================
     # logs command

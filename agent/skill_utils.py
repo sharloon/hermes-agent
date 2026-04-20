@@ -433,9 +433,17 @@ def iter_skill_index_files(skills_dir: Path, filename: str):
     """Walk skills_dir yielding sorted paths matching *filename*.
 
     Excludes ``.git``, ``.github``, ``.hub`` directories.
+
+    Args:
+        skills_dir: Root skills directory to scan.
+        filename: Target filename to find (e.g., "SKILL.md").
+
+    Note: Filtering of private skills by user is now handled by the caller
+    using database queries, not by filesystem directory structure.
     """
     matches = []
     for root, dirs, files in os.walk(skills_dir):
+        # Filter out excluded directories
         dirs[:] = [d for d in dirs if d not in EXCLUDED_SKILL_DIRS]
         if filename in files:
             matches.append(Path(root) / filename)

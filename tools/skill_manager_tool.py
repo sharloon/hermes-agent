@@ -668,6 +668,9 @@ def skill_manage(
         try:
             from agent.prompt_builder import clear_skills_system_prompt_cache
             clear_skills_system_prompt_cache(clear_snapshot=True)
+            # Also invalidate skills_tool caches
+            from tools.skills_tool import _invalidate_skill_caches
+            _invalidate_skill_caches()
         except Exception:
             pass
 

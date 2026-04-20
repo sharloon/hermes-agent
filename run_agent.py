@@ -3457,6 +3457,7 @@ class AIAgent:
             skills_prompt = build_skills_system_prompt(
                 available_tools=self.valid_tool_names,
                 available_toolsets=avail_toolsets,
+                user_id=self._user_id,  # Pass user_id for private skills filtering
             )
         else:
             skills_prompt = ""

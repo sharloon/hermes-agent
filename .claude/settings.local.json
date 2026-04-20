@@ -1,0 +1,34 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(///wsl.localhost/Ubuntu-24.04/mnt/**)",
+      "Read(///wsl.localhost/Ubuntu-24.04/home/sharloon/**)",
+      "Bash(npm run *)",
+      "Bash(bash *)",
+      "Bash(wsl bash *)",
+      "Bash(wsl *)",
+      "Bash(hermes config *)",
+      "Bash(python *)",
+      "Bash(curl *)",
+      "Bash(cat \"\\\\\\\\wsl.localhost\\\\Ubuntu-24.04\\\\home\\\\sharloon\\\\.hermes\\\\config.yaml\")",
+      "Bash(ls -la \"\\\\\\\\wsl.localhost\\\\Ubuntu-24.04\\\\home\\\\sharloon\\\\hermes-agent\\\\skills\")",
+      "Bash(ls -la \"\\\\\\\\wsl.localhost\\\\Ubuntu-24.04\\\\home\\\\sharloon\\\\.hermes\\\\skills\")",
+      "Bash(powershell *)",
+      "Bash(ls *)",
+      "Bash(cat \"\\\\\\\\wsl.localhost\\\\Ubuntu-24.04\\\\home\\\\sharloon\\\\.hermes\\\\.skills_prompt_snapshot.json\")",
+      "Bash(cat \"\\\\\\\\wsl.localhost\\\\Ubuntu-24.04\\\\home\\\\sharloon\\\\.hermes\\\\skills\\\\private-17e196bd49c94b19\\\\host_inspection\\\\SKILL.md\")",
+      "Bash(grep -n \"def __init__\" \"\\\\\\\\wsl.localhost\\\\Ubuntu-24.04\\\\home\\\\sharloon\\\\hermes-agent\\\\run_agent.py\")",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); skills=[e for e in d.get\\('skills',[]\\) if 'host' in str\\(e\\).lower\\(\\)]; print\\(skills\\)\")",
+      "Bash(sqlite3 \"\\\\\\\\wsl.localhost\\\\Ubuntu-24.04\\\\home\\\\sharloon\\\\.hermes\\\\user_data.db\" \"SELECT id, email, username FROM users;\")",
+      "Bash(cat \"\\\\\\\\wsl.localhost\\\\Ubuntu-24.04\\\\home\\\\sharloon\\\\.hermes\\\\skills\\\\private-17e196bd49c94b19\\\\host-inspection\\\\SKILL.md\")",
+      "Bash(sqlite3 \"\\\\\\\\wsl.localhost\\\\Ubuntu-24.04\\\\home\\\\sharloon\\\\.hermes\\\\user_data.db\" \"SELECT id, name, visibility, status FROM skills;\")",
+      "Bash(grep -A 20 \"def unpublish\" \"\\\\\\\\wsl.localhost\\\\Ubuntu-24.04\\\\home\\\\sharloon\\\\hermes-agent\\\\api\\\\skills.py\")",
+      "Bash(grep -A 20 \"unpublish\" \"\\\\\\\\wsl.localhost\\\\Ubuntu-24.04\\\\home\\\\sharloon\\\\hermes-agent\\\\api\\\\skills.py\")",
+      "Bash(sqlite3 ~/.hermes/user_data.db \".tables\")",
+      "Bash(sqlite3 ~/.hermes/user_data.db \"SELECT id, owner_id, name, visibility, status FROM skills;\")",
+      "Bash(find \"\\\\\\\\wsl.localhost\\\\Ubuntu-24.04\\\\home\\\\sharloon\\\\.hermes\\\\skills\" -name \"SKILL.md\")",
+      "Bash(sqlite3 *)",
+      "Bash(wslpath *)"
+    ]
+  }
+}

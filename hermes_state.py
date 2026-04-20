@@ -1235,4 +1235,297 @@ class SessionDB:
                 conn.execute("DELETE FROM sessions WHERE id = ?", (sid,))
             return len(session_ids)
 
+
+# ─── User Data DB ─────────────────────────────────────────────────────────────
+
+USER_DATA_SCHEMA_VERSION = 1
+
+USER_DATA_SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS ud_schema_version (
+    version INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS users (
+    id TEXT PRIMARY KEY,
+    email TEXT UNIQUE NOT NULL,
+    username TEXT,
+    password_hash TEXT NOT NULL,
+    um_id TEXT UNIQUE,
+    is_active INTEGER NOT NULL DEFAULT 1,
+    is_admin INTEGER NOT NULL DEFAULT 0,
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS user_files (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id),
+    filename TEXT NOT NULL,
+    content_type TEXT,
+    storage_path TEXT NOT NULL,
+    size_bytes INTEGER,
+    uploaded_at REAL NOT NULL,
+    is_deleted INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS skills (
+    id TEXT PRIMARY KEY,
+    owner_id TEXT NOT NULL REFERENCES users(id),
+    name TEXT NOT NULL,
+    description TEXT,
+    skill_content TEXT NOT NULL,
+    visibility TEXT NOT NULL DEFAULT 'private',
+    status TEXT NOT NULL DEFAULT 'draft',
+    published_at REAL,
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+CREATE INDEX IF NOT EXISTS idx_user_files_user ON user_files(user_id);
+CREATE INDEX IF NOT EXISTS idx_skills_owner ON skills(owner_id);
+CREATE INDEX IF NOT EXISTS idx_skills_public ON skills(visibility, status);
+"""
+
+
+class UserDataDB:
+    """User-centric data store: users, private files, skills.
+
+    Stored in a separate ``user_data.db`` file to avoid coupling with the
+    session/message store in ``state.db``.
+    """
+
+    def __init__(self, db_path: Path = None):
+        self.db_path = db_path or (get_hermes_home() / "user_data.db")
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.Lock()
+        self._conn = sqlite3.connect(
+            str(self.db_path),
+            check_same_thread=False,
+            timeout=5.0,
+            isolation_level=None,
+        )
+        self._conn.row_factory = sqlite3.Row
+        self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute("PRAGMA foreign_keys=ON")
+        self._init_schema()
+
+    def _init_schema(self):
+        cursor = self._conn.cursor()
+        cursor.executescript(USER_DATA_SCHEMA_SQL)
+        cursor.execute("SELECT version FROM ud_schema_version LIMIT 1")
+        row = cursor.fetchone()
+        if row is None:
+            cursor.execute(
+                "INSERT INTO ud_schema_version (version) VALUES (?)",
+                (USER_DATA_SCHEMA_VERSION,),
+            )
+        self._conn.commit()
+
+    def _write(self, fn):
+        with self._lock:
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                result = fn(self._conn)
+                self._conn.commit()
+                return result
+            except BaseException:
+                try:
+                    self._conn.rollback()
+                except Exception:
+                    pass
+                raise
+
+    def close(self):
+        with self._lock:
+            if self._conn:
+                self._conn.close()
+                self._conn = None
+
+    # ── Users ──────────────────────────────────────────────────────────────────
+
+    def create_user(
+        self,
+        user_id: str,
+        email: str,
+        password_hash: str,
+        username: str = None,
+        um_id: str = None,
+        is_admin: int = 0,
+    ) -> dict:
+        now = time.time()
+        def _do(conn):
+            conn.execute(
+                "INSERT INTO users "
+                "(id, email, username, password_hash, um_id, is_admin, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (user_id, email, username, password_hash, um_id, is_admin, now, now),
+            )
+        self._write(_do)
+        return self.get_user_by_id(user_id)
+
+    def user_count(self) -> int:
+        """Return the total number of users (for auto-admin detection)."""
+        with self._lock:
+            row = self._conn.execute("SELECT COUNT(*) FROM users").fetchone()
+        return row[0] if row else 0
+
+    def get_user_by_id(self, user_id: str) -> Optional[dict]:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT id, email, username, um_id, is_active, is_admin, created_at "
+                "FROM users WHERE id = ?",
+                (user_id,),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def get_user_by_email(self, email: str) -> Optional[dict]:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT id, email, username, password_hash, um_id, "
+                "is_active, is_admin, created_at "
+                "FROM users WHERE email = ?",
+                (email,),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def email_exists(self, email: str) -> bool:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT 1 FROM users WHERE email = ?", (email,)
+            ).fetchone()
+        return row is not None
+
+    # ── User Files ─────────────────────────────────────────────────────────────
+
+    def add_user_file(
+        self,
+        file_id: str,
+        user_id: str,
+        filename: str,
+        content_type: str,
+        storage_path: str,
+        size_bytes: int,
+    ) -> dict:
+        now = time.time()
+        def _do(conn):
+            conn.execute(
+                "INSERT INTO user_files "
+                "(id, user_id, filename, content_type, storage_path, size_bytes, uploaded_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (file_id, user_id, filename, content_type, storage_path, size_bytes, now),
+            )
+        self._write(_do)
+        return self.get_user_file(file_id)
+
+    def get_user_file(self, file_id: str) -> Optional[dict]:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT id, user_id, filename, content_type, storage_path, size_bytes, uploaded_at "
+                "FROM user_files WHERE id = ? AND is_deleted = 0",
+                (file_id,),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def list_user_files(self, user_id: str) -> List[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id, filename, content_type, size_bytes, uploaded_at "
+                "FROM user_files WHERE user_id = ? AND is_deleted = 0 "
+                "ORDER BY uploaded_at DESC",
+                (user_id,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def soft_delete_file(self, file_id: str, user_id: str) -> bool:
+        def _do(conn):
+            cur = conn.execute(
+                "UPDATE user_files SET is_deleted = 1 WHERE id = ? AND user_id = ?",
+                (file_id, user_id),
+            )
+            return cur.rowcount > 0
+        return self._write(_do)
+
+    # ── Skills ─────────────────────────────────────────────────────────────────
+
+    def create_skill(
+        self,
+        skill_id: str,
+        owner_id: str,
+        name: str,
+        description: str,
+        skill_content: str,
+    ) -> dict:
+        now = time.time()
+        def _do(conn):
+            conn.execute(
+                "INSERT INTO skills "
+                "(id, owner_id, name, description, skill_content, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (skill_id, owner_id, name, description, skill_content, now, now),
+            )
+        self._write(_do)
+        return self.get_skill(skill_id)
+
+    def get_skill(self, skill_id: str) -> Optional[dict]:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT id, owner_id, name, description, skill_content, visibility, "
+                "status, published_at, created_at, updated_at "
+                "FROM skills WHERE id = ?",
+                (skill_id,),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def list_skills(
+        self,
+        owner_id: str = None,
+        visibility: str = None,
+        status: str = None,
+    ) -> List[dict]:
+        conditions: list = []
+        params: list = []
+        if owner_id is not None:
+            conditions.append("owner_id = ?")
+            params.append(owner_id)
+        if visibility is not None:
+            conditions.append("visibility = ?")
+            params.append(visibility)
+        if status is not None:
+            conditions.append("status = ?")
+            params.append(status)
+        where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+        with self._lock:
+            rows = self._conn.execute(
+                f"SELECT id, owner_id, name, description, visibility, status, created_at, updated_at "
+                f"FROM skills {where} ORDER BY created_at DESC",
+                params,
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def update_skill(self, skill_id: str, owner_id: str, **fields) -> Optional[dict]:
+        allowed = {"name", "description", "skill_content", "visibility", "status", "published_at"}
+        updates = {k: v for k, v in fields.items() if k in allowed}
+        if not updates:
+            return self.get_skill(skill_id)
+        updates["updated_at"] = time.time()
+        set_clause = ", ".join(f"{k} = ?" for k in updates)
+        values = list(updates.values()) + [skill_id, owner_id]
+        def _do(conn):
+            conn.execute(
+                f"UPDATE skills SET {set_clause} WHERE id = ? AND owner_id = ?",
+                values,
+            )
+        self._write(_do)
+        return self.get_skill(skill_id)
+
+    def delete_skill(self, skill_id: str, owner_id: str) -> bool:
+        def _do(conn):
+            cur = conn.execute(
+                "DELETE FROM skills WHERE id = ? AND owner_id = ?",
+                (skill_id, owner_id),
+            )
+            return cur.rowcount > 0
+        return self._write(_do)
+
         return self._execute_write(_do)

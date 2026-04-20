@@ -91,6 +91,14 @@ SKILLS_DIR = HERMES_HOME / "skills"
 MAX_NAME_LENGTH = 64
 MAX_DESCRIPTION_LENGTH = 1024
 
+# ── In-memory caches for skill metadata and content ──────────────────────────
+# Reduces filesystem scans on repeated skill_view/skills_list calls within a session.
+# Cache is invalidated when skills are modified via skill_manage.
+_skills_list_cache: Optional[List[Dict[str, Any]]] = None
+_skills_list_cache_mtime: float = 0.0  # Last manifest modification time
+_skill_content_cache: Dict[str, str] = {}  # skill_name -> JSON result
+_skill_path_cache: Dict[str, Tuple[Path, Path]] = {}  # skill_name -> (skill_dir, skill_md)
+
 # Platform identifiers for the 'platforms' frontmatter field.
 # Maps user-friendly names to sys.platform prefixes.
 _PLATFORM_MAP = {
@@ -118,6 +126,39 @@ def load_env() -> Dict[str, str]:
                 key, _, value = line.partition("=")
                 env_vars[key.strip()] = value.strip().strip("\"'")
     return env_vars
+
+
+def _invalidate_skill_caches():
+    """Clear all skill caches (called when skills are modified)."""
+    global _skills_list_cache, _skills_list_cache_mtime
+    _skills_list_cache = None
+    _skills_list_cache_mtime = 0.0
+    _skill_content_cache.clear()
+    _skill_path_cache.clear()
+    logger.debug("Skill caches invalidated")
+
+
+def _get_skills_dir_mtime() -> float:
+    """Get the most recent modification time of any SKILL.md in skills directory.
+
+    Used to detect if skills_list cache needs refresh.
+    """
+    if not SKILLS_DIR.exists():
+        return 0.0
+    try:
+        max_mtime = 0.0
+        for skill_md in SKILLS_DIR.rglob("SKILL.md"):
+            if any(part in _EXCLUDED_SKILL_DIRS for part in skill_md.parts):
+                continue
+            try:
+                mtime = skill_md.stat().st_mtime
+                if mtime > max_mtime:
+                    max_mtime = mtime
+            except OSError:
+                continue
+        return max_mtime
+    except Exception:
+        return 0.0
 
 
 class SkillReadinessStatus(str, Enum):
@@ -671,8 +712,19 @@ def skills_list(category: str = None, task_id: str = None) -> str:
                 ensure_ascii=False,
             )
 
-        # Find all skills
-        all_skills = _find_all_skills()
+        # Check cache validity (refresh if skills directory changed)
+        global _skills_list_cache, _skills_list_cache_mtime
+        current_mtime = _get_skills_dir_mtime()
+        if _skills_list_cache is not None and _skills_list_cache_mtime >= current_mtime:
+            # Use cached skill list
+            all_skills = _skills_list_cache
+            logger.debug("skills_list: using cached data (%d skills)", len(all_skills))
+        else:
+            # Find all skills and cache the result
+            all_skills = _find_all_skills()
+            _skills_list_cache = all_skills
+            _skills_list_cache_mtime = current_mtime
+            logger.debug("skills_list: refreshed cache (%d skills)", len(all_skills))
 
         if not all_skills:
             return json.dumps(
@@ -690,7 +742,7 @@ def skills_list(category: str = None, task_id: str = None) -> str:
             all_skills = [s for s in all_skills if s.get("category") == category]
 
         # Sort by category then name
-        all_skills.sort(key=lambda s: (s.get("category") or "", s["name"]))
+        all_skills_sorted = sorted(all_skills, key=lambda s: (s.get("category") or "", s["name"]))
 
         # Extract unique categories
         categories = sorted(
@@ -700,9 +752,9 @@ def skills_list(category: str = None, task_id: str = None) -> str:
         return json.dumps(
             {
                 "success": True,
-                "skills": all_skills,
+                "skills": all_skills_sorted,
                 "categories": categories,
-                "count": len(all_skills),
+                "count": len(all_skills_sorted),
                 "hint": "Use skill_view(name) to see full content, tags, and linked files",
             },
             ensure_ascii=False,
@@ -815,6 +867,13 @@ def skill_view(name: str, file_path: str = None, task_id: str = None) -> str:
         JSON string with skill content or error message
     """
     try:
+        # ── Cache check for main skill content (not for linked files) ──────────
+        # Only cache when requesting main SKILL.md (file_path is None)
+        cache_key = name if file_path is None else None
+        if cache_key and cache_key in _skill_content_cache:
+            logger.debug("skill_view: using cached content for '%s'", name)
+            return _skill_content_cache[cache_key]
+
         # ── Qualified name dispatch (plugin skills) ──────────────────
         # Names containing ':' are routed to the plugin skill registry.
         # Bare names fall through to the existing flat-tree scan below.
@@ -892,17 +951,29 @@ def skill_view(name: str, file_path: str = None, task_id: str = None) -> str:
         skill_dir = None
         skill_md = None
 
+        # ── Check path cache first ─────────────────────────────────────────
+        if name in _skill_path_cache:
+            cached_skill_dir, cached_skill_md = _skill_path_cache[name]
+            if cached_skill_md.exists():
+                skill_dir = cached_skill_dir
+                skill_md = cached_skill_md
+                logger.debug("skill_view: using cached path for '%s'", name)
+            else:
+                # Cache stale - remove and continue with normal search
+                del _skill_path_cache[name]
+
         # Search all dirs: local first, then external (first match wins)
-        for search_dir in all_dirs:
-            # Try direct path first (e.g., "mlops/axolotl")
-            direct_path = search_dir / name
-            if direct_path.is_dir() and (direct_path / "SKILL.md").exists():
-                skill_dir = direct_path
-                skill_md = direct_path / "SKILL.md"
-                break
-            elif direct_path.with_suffix(".md").exists():
-                skill_md = direct_path.with_suffix(".md")
-                break
+        if not skill_md:
+            for search_dir in all_dirs:
+                # Try direct path first (e.g., "mlops/axolotl")
+                direct_path = search_dir / name
+                if direct_path.is_dir() and (direct_path / "SKILL.md").exists():
+                    skill_dir = direct_path
+                    skill_md = direct_path / "SKILL.md"
+                    break
+                elif direct_path.with_suffix(".md").exists():
+                    skill_md = direct_path.with_suffix(".md")
+                    break
 
         # Search by directory name across all dirs
         if not skill_md:
@@ -912,6 +983,26 @@ def skill_view(name: str, file_path: str = None, task_id: str = None) -> str:
                         skill_dir = found_skill_md.parent
                         skill_md = found_skill_md
                         break
+                if skill_md:
+                    break
+
+        # Search by frontmatter name (for private skills stored by skill_id)
+        # Skills in private/ directory have skill_id as directory name,
+        # but frontmatter contains the human-readable skill name
+        if not skill_md:
+            from agent.skill_utils import parse_frontmatter
+            for search_dir in all_dirs:
+                for found_skill_md in search_dir.rglob("SKILL.md"):
+                    try:
+                        content = found_skill_md.read_text(encoding="utf-8")
+                        fm, _ = parse_frontmatter(content)
+                        # Match by frontmatter name or id
+                        if fm.get("name") == name or fm.get("id") == name:
+                            skill_dir = found_skill_md.parent
+                            skill_md = found_skill_md
+                            break
+                    except Exception:
+                        continue
                 if skill_md:
                     break
 
@@ -936,6 +1027,10 @@ def skill_view(name: str, file_path: str = None, task_id: str = None) -> str:
                 },
                 ensure_ascii=False,
             )
+
+        # Cache the path for future lookups
+        if skill_dir and skill_md and name not in _skill_path_cache:
+            _skill_path_cache[name] = (skill_dir, skill_md)
 
         # Read the file once — reused for platform check and main content below
         try:
@@ -1309,7 +1404,13 @@ def skill_view(name: str, file_path: str = None, task_id: str = None) -> str:
         if isinstance(metadata, dict):
             result["metadata"] = metadata
 
-        return json.dumps(result, ensure_ascii=False)
+        # Cache the result for future calls (only for main SKILL.md, not linked files)
+        result_json = json.dumps(result, ensure_ascii=False)
+        if cache_key:
+            _skill_content_cache[cache_key] = result_json
+            logger.debug("skill_view: cached content for '%s'", name)
+
+        return result_json
 
     except Exception as e:
         return tool_error(str(e), success=False)

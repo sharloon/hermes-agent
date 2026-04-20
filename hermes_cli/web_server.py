@@ -118,6 +118,9 @@ def _require_token(request: Request) -> None:
 async def auth_middleware(request: Request, call_next):
     """Require the session token on all /api/ routes except the public list."""
     path = request.url.path
+    # Enterprise API (/api/v1/) uses its own JWT auth — skip the session token check.
+    if path.startswith("/api/v1/"):
+        return await call_next(request)
     if path.startswith("/api/") and path not in _PUBLIC_API_PATHS and not path.startswith("/api/plugins/"):
         auth = request.headers.get("authorization", "")
         expected = f"Bearer {_SESSION_TOKEN}"
@@ -2308,6 +2311,31 @@ def _mount_plugin_api_routes():
 
 # Mount plugin API routes before the SPA catch-all.
 _mount_plugin_api_routes()
+
+
+def _mount_enterprise_api_routes():
+    """Mount enterprise multi-user API routes (/api/v1/...) into the dashboard server.
+
+    This allows the dashboard frontend to call enterprise endpoints on the same
+    origin (port 9119) without CORS issues.
+    """
+    try:
+        from api.auth import router as auth_router
+        from api.users import router as users_router
+        from api.files import router as files_router
+        from api.conversations import router as conv_router
+        from api.skills import router as skills_router
+        app.include_router(auth_router, prefix="/api/v1/auth", tags=["enterprise-auth"])
+        app.include_router(users_router, prefix="/api/v1/users", tags=["enterprise-users"])
+        app.include_router(files_router, prefix="/api/v1/files", tags=["enterprise-files"])
+        app.include_router(conv_router, prefix="/api/v1/conversations", tags=["enterprise-conversations"])
+        app.include_router(skills_router, prefix="/api/v1/skills", tags=["enterprise-skills"])
+        _log.info("Mounted enterprise API routes at /api/v1/")
+    except Exception as exc:
+        _log.warning("Enterprise API routes not mounted (install api/ module): %s", exc)
+
+
+_mount_enterprise_api_routes()
 
 mount_spa(app)
 

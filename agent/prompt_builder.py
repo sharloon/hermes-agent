@@ -447,8 +447,14 @@ def clear_skills_system_prompt_cache(*, clear_snapshot: bool = False) -> None:
 
 
 def _build_skills_manifest(skills_dir: Path) -> dict[str, list[int]]:
-    """Build an mtime/size manifest of all SKILL.md and DESCRIPTION.md files."""
+    """Build an mtime/size manifest of all SKILL.md and DESCRIPTION.md files.
+
+    Includes ALL files (including private/ directory) so that when
+    a user's private skills change, the manifest changes and the snapshot
+    becomes invalid, forcing a fresh scan with user-specific filtering.
+    """
     manifest: dict[str, list[int]] = {}
+    # Scan all files including private/ directory
     for filename in ("SKILL.md", "DESCRIPTION.md"):
         for path in iter_skill_index_files(skills_dir, filename):
             try:
@@ -502,11 +508,14 @@ def _build_snapshot_entry(
     frontmatter: dict,
     description: str,
 ) -> dict:
-    """Build a serialisable metadata dict for one skill."""
+    """Build a serialisable metadata dict for one skill.
+
+    Includes owner_id, visibility, status for database-based filtering.
+    """
     rel_path = skill_file.relative_to(skills_dir)
     parts = rel_path.parts
     if len(parts) >= 2:
-        skill_name = parts[-2]
+        skill_name = parts[-2]  # directory name (skill_id for private skills)
         category = "/".join(parts[:-2]) if len(parts) > 2 else parts[0]
     else:
         category = "general"
@@ -516,13 +525,21 @@ def _build_snapshot_entry(
     if isinstance(platforms, str):
         platforms = [platforms]
 
+    # Use frontmatter name for display (skill_id is not user-friendly)
+    display_name = str(frontmatter.get("name", skill_name))
+
+    # Include metadata for filtering
     return {
-        "skill_name": skill_name,
+        "skill_name": display_name,  # Use frontmatter name for display
+        "skill_id": str(frontmatter.get("id", skill_name)),  # skill_id from frontmatter or dir name
         "category": category,
-        "frontmatter_name": str(frontmatter.get("name", skill_name)),
+        "frontmatter_name": display_name,
         "description": description,
         "platforms": [str(p).strip() for p in platforms if str(p).strip()],
         "conditions": extract_skill_conditions(frontmatter),
+        "owner_id": str(frontmatter.get("owner_id", "")),
+        "visibility": str(frontmatter.get("visibility", "private")),
+        "status": str(frontmatter.get("status", "draft")),
     }
 
 
@@ -583,11 +600,12 @@ def _skill_should_show(
 def build_skills_system_prompt(
     available_tools: "set[str] | None" = None,
     available_toolsets: "set[str] | None" = None,
+    user_id: Optional[str] = None,
 ) -> str:
     """Build a compact skill index for the system prompt.
 
     Two-layer cache:
-      1. In-process LRU dict keyed by (skills_dir, tools, toolsets)
+      1. In-process LRU dict keyed by (skills_dir, tools, toolsets, user_id)
       2. Disk snapshot (``.skills_prompt_snapshot.json``) validated by
          mtime/size manifest — survives process restarts
 
@@ -597,6 +615,12 @@ def build_skills_system_prompt(
     scanned alongside the local ``~/.hermes/skills/`` directory.  External dirs
     are read-only — they appear in the index but new skills are always created
     in the local dir.  Local skills take precedence when names collide.
+
+    Args:
+        available_tools: Set of available tool names for conditional skill activation.
+        available_toolsets: Set of available toolsets for conditional skill activation.
+        user_id: Optional user ID for filtering private skills. If provided,
+            only that user's private skills directory will be scanned.
     """
     skills_dir = get_skills_dir()
     external_dirs = get_all_skills_dirs()[1:]  # skip local (index 0)
@@ -607,6 +631,7 @@ def build_skills_system_prompt(
     # ── Layer 1: in-process LRU cache ─────────────────────────────────
     # Include the resolved platform so per-platform disabled-skill lists
     # produce distinct cache entries (gateway serves multiple platforms).
+    # Include user_id so different users get different skill lists.
     from gateway.session_context import get_session_env
     _platform_hint = (
         os.environ.get("HERMES_PLATFORM")
@@ -619,6 +644,7 @@ def build_skills_system_prompt(
         tuple(sorted(str(t) for t in (available_tools or set()))),
         tuple(sorted(str(ts) for ts in (available_toolsets or set()))),
         _platform_hint,
+        user_id or "",  # Include user_id in cache key for isolation
     )
     with _SKILLS_PROMPT_CACHE_LOCK:
         cached = _SKILLS_PROMPT_CACHE.get(cache_key)
@@ -627,6 +653,28 @@ def build_skills_system_prompt(
             return cached
 
     disabled = get_disabled_skill_names()
+
+    # Helper function: check if skill should be visible to current user
+    def _skill_visible_to_user(entry: dict, current_user_id: Optional[str]) -> bool:
+        """Check if skill should be visible based on database metadata."""
+        owner_id = entry.get("owner_id", "")
+        visibility = entry.get("visibility", "private")
+        status = entry.get("status", "draft")
+        category = entry.get("category", "general")
+
+        # Skills not in private/ directory (builtin, external) are always visible
+        if category != "private":
+            return True
+
+        # Private skills: check ownership and visibility
+        if current_user_id and owner_id == current_user_id:
+            # User's own skill - always visible
+            return True
+        if visibility == "public" and status == "published":
+            # Published public skill - visible to everyone
+            return True
+        # Other user's private skill - not visible
+        return False
 
     # ── Layer 2: disk snapshot ────────────────────────────────────────
     snapshot = _load_skills_snapshot(skills_dir)
@@ -645,6 +693,9 @@ def build_skills_system_prompt(
             platforms = entry.get("platforms") or []
             if not skill_matches_platform({"platforms": platforms}):
                 continue
+            # Filter based on database metadata (owner_id, visibility, status)
+            if not _skill_visible_to_user(entry, user_id):
+                continue
             if frontmatter_name in disabled or skill_name in disabled:
                 continue
             if not _skill_should_show(
@@ -662,14 +713,19 @@ def build_skills_system_prompt(
         }
     else:
         # Cold path: full filesystem scan + write snapshot for next time
-        skill_entries: list[dict] = []
+        all_skill_entries: list[dict] = []
         for skill_file in iter_skill_index_files(skills_dir, "SKILL.md"):
             is_compatible, frontmatter, desc = _parse_skill_file(skill_file)
             entry = _build_snapshot_entry(skill_file, skills_dir, frontmatter, desc)
-            skill_entries.append(entry)
+            all_skill_entries.append(entry)
+
+            # Filter for current user
             if not is_compatible:
                 continue
+            if not _skill_visible_to_user(entry, user_id):
+                continue
             skill_name = entry["skill_name"]
+            category = entry.get("category") or "general"
             if entry["frontmatter_name"] in disabled or skill_name in disabled:
                 continue
             if not _skill_should_show(
@@ -678,11 +734,12 @@ def build_skills_system_prompt(
                 available_toolsets,
             ):
                 continue
-            skills_by_category.setdefault(entry["category"], []).append(
+            skills_by_category.setdefault(category, []).append(
                 (skill_name, entry["description"])
             )
 
-        # Read category-level DESCRIPTION.md files
+        # Read ALL category-level DESCRIPTION.md files for snapshot
+        all_category_descriptions: dict[str, str] = {}
         for desc_file in iter_skill_index_files(skills_dir, "DESCRIPTION.md"):
             try:
                 content = desc_file.read_text(encoding="utf-8")
@@ -692,15 +749,19 @@ def build_skills_system_prompt(
                     continue
                 rel = desc_file.relative_to(skills_dir)
                 cat = "/".join(rel.parts[:-1]) if len(rel.parts) > 1 else "general"
-                category_descriptions[cat] = str(cat_desc).strip().strip("'\"")
+                all_category_descriptions[cat] = str(cat_desc).strip().strip("'\"")
+                # Add to current user's view if not private
+                if cat != "private":
+                    category_descriptions[cat] = str(cat_desc).strip().strip("'\"")
             except Exception as e:
                 logger.debug("Could not read skill description %s: %s", desc_file, e)
 
+        # Write snapshot with ALL skills (for cross-user compatibility)
         _write_skills_snapshot(
             skills_dir,
             _build_skills_manifest(skills_dir),
-            skill_entries,
-            category_descriptions,
+            all_skill_entries,
+            all_category_descriptions,
         )
 
     # ── External skill directories ─────────────────────────────────────

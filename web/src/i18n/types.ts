@@ -63,6 +63,10 @@ export interface Translations {
       skills: string;
       config: string;
       keys: string;
+      chat: string;
+      space: string;
+      mySkills: string;
+      publicSkills: string;
     };
   };
 
