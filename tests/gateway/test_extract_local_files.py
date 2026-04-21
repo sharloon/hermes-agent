@@ -208,9 +208,9 @@ class TestCodeBlockExclusion:
 class TestDeduplication:
 
     def test_duplicate_paths_deduplicated(self):
-        text = "See /tmp/img.png and also /tmp/img.png again"
+        text = "See /tmp/左侧菜单栏样式.png and also /tmp/左侧菜单栏样式.png again"
         paths, _ = _extract(text)
-        assert paths == ["/tmp/img.png"]
+        assert paths == ["/tmp/左侧菜单栏样式.png"]
 
     def test_tilde_and_expanded_same_file(self):
         """~/photos/a.png and /home/user/photos/a.png are the same file."""
@@ -296,17 +296,17 @@ class TestEdgeCases:
     def test_path_followed_by_punctuation(self):
         """Path followed by comma, period, paren should still match."""
         for suffix in [",", ".", ")", ":", ";"]:
-            text = f"See /tmp/img.png{suffix} details"
+            text = f"See /tmp/左侧菜单栏样式.png{suffix} details"
             paths, _ = _extract(text)
             assert len(paths) == 1, f"Failed with suffix '{suffix}'"
 
     def test_path_in_parentheses(self):
-        paths, _ = _extract("(see /tmp/img.png)")
-        assert paths == ["/tmp/img.png"]
+        paths, _ = _extract("(see /tmp/左侧菜单栏样式.png)")
+        assert paths == ["/tmp/左侧菜单栏样式.png"]
 
     def test_path_in_quotes(self):
-        paths, _ = _extract('The file is "/tmp/img.png" right here')
-        assert paths == ["/tmp/img.png"]
+        paths, _ = _extract('The file is "/tmp/左侧菜单栏样式.png" right here')
+        assert paths == ["/tmp/左侧菜单栏样式.png"]
 
     def test_deep_nested_path(self):
         paths, _ = _extract("At /a/b/c/d/e/f/g/h/image.png end")

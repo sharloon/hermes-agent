@@ -609,7 +609,7 @@ class TestHasClipboardImageWin32:
 
 class TestConvertToPng:
     def test_pillow_conversion(self, tmp_path):
-        dest = tmp_path / "img.png"
+        dest = tmp_path / "左侧菜单栏样式.png"
         dest.write_bytes(FAKE_BMP)
         mock_img_instance = MagicMock()
         mock_image_cls = MagicMock()
@@ -622,7 +622,7 @@ class TestConvertToPng:
             mock_img_instance.save.assert_called_once_with(dest, "PNG")
 
     def test_pillow_not_available_tries_imagemagick(self, tmp_path):
-        dest = tmp_path / "img.png"
+        dest = tmp_path / "左侧菜单栏样式.png"
         dest.write_bytes(FAKE_BMP)
 
         def fake_run(cmd, **kw):
@@ -656,7 +656,7 @@ class TestConvertToPng:
 
     def test_file_still_usable_when_no_converter(self, tmp_path):
         """BMP file should still be reported as success if no converter available."""
-        dest = tmp_path / "img.png"
+        dest = tmp_path / "左侧菜单栏样式.png"
         dest.write_bytes(FAKE_BMP)  # it's a BMP but named .png
         # Both Pillow and ImageMagick unavailable
         with patch.dict(sys.modules, {"PIL": None, "PIL.Image": None}):
@@ -668,7 +668,7 @@ class TestConvertToPng:
 
     def test_imagemagick_failure_preserves_original(self, tmp_path):
         """When ImageMagick convert fails, the original file must not be lost."""
-        dest = tmp_path / "img.png"
+        dest = tmp_path / "左侧菜单栏样式.png"
         original_data = FAKE_BMP
         dest.write_bytes(original_data)
 
@@ -686,7 +686,7 @@ class TestConvertToPng:
 
     def test_imagemagick_not_installed_preserves_original(self, tmp_path):
         """When ImageMagick is not installed, the original file must not be lost."""
-        dest = tmp_path / "img.png"
+        dest = tmp_path / "左侧菜单栏样式.png"
         original_data = FAKE_BMP
         dest.write_bytes(original_data)
 
@@ -700,7 +700,7 @@ class TestConvertToPng:
     def test_imagemagick_timeout_preserves_original(self, tmp_path):
         """When ImageMagick times out, the original file must not be lost."""
         import subprocess
-        dest = tmp_path / "img.png"
+        dest = tmp_path / "左侧菜单栏样式.png"
         original_data = FAKE_BMP
         dest.write_bytes(original_data)
 

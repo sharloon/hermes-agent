@@ -120,6 +120,7 @@ export const eConversations = {
     message: string,
     sessionId: string | null,
     fileIds: string[],
+    skillId: string | null,
     onChunk?: (chunk: string) => void,
   ): Promise<{ content: string; session_id: string }> => {
     const token = getToken();
@@ -128,12 +129,12 @@ export const eConversations = {
     };
     if (token) headers["Authorization"] = `Bearer ${token}`;
 
-    console.log("[eConversations.send] Sending message:", { message, sessionId, fileIds });
+    console.log("[eConversations.send] Sending message:", { message, sessionId, fileIds, skillId });
 
     const res = await fetch(`${BASE}/conversations/send`, {
       method: "POST",
       headers,
-      body: JSON.stringify({ message, session_id: sessionId, file_ids: fileIds }),
+      body: JSON.stringify({ message, session_id: sessionId, file_ids: fileIds, skill_id: skillId }),
     });
 
     console.log("[eConversations.send] Response status:", res.status);
@@ -218,10 +219,15 @@ export interface PublicSkillInfo {
   can_remove: boolean;
 }
 
+export interface SelectableSkill extends SkillDetail {
+  source: "builtin" | "own" | "public";
+}
+
 export const eSkills = {
   listMine: () => req<SkillSummary[]>("/skills"),
   listPublic: () => req<SkillSummary[]>("/skills?visibility=public"),
   listAllPublic: () => req<PublicSkillInfo[]>("/skills/all-public"),
+  listSelectable: () => req<SelectableSkill[]>("/skills/selectable"),
   get: (id: string) => req<SkillDetail>(`/skills/${id}`),
 
   create: (name: string, description: string, skill_content: string) =>

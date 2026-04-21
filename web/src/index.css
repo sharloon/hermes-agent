@@ -48,6 +48,79 @@
   --font-compressed: "RulesCompressed", Arial, sans-serif;
 }
 
+/* ---- Sidebar dark theme override ---- */
+.sidebar-theme {
+  --color-background: #0D1117;
+  --color-foreground: #e5e7eb;
+  --color-card: #161B22;
+  --color-card-foreground: #e5e7eb;
+  --color-primary: #F97316;
+  --color-primary-foreground: #0D1117;
+  --color-secondary: #21262D;
+  --color-secondary-foreground: #e5e7eb;
+  --color-muted: #1E293B;
+  --color-muted-foreground: #9ca3af;
+  --color-accent: #334155;
+  --color-accent-foreground: #e5e7eb;
+  --color-border: #1E293B;
+  --color-input: #21262D;
+  --color-ring: #F97316;
+  --color-popover: #161B22;
+  --color-popover-foreground: #e5e7eb;
+}
+
+/* ---- Sidebar theme button adjustments ---- */
+.sidebar-theme button[class*="bg-foreground"] {
+  background-color: #F97316;
+  color: #0D1117;
+}
+.sidebar-theme button[class*="bg-foreground"]:hover {
+  background-color: #ea580c;
+}
+.sidebar-theme button[class*="bg-secondary"] {
+  background-color: #21262D;
+  color: #e5e7eb;
+}
+.sidebar-theme button[class*="bg-secondary"]:hover {
+  background-color: #30363d;
+}
+.sidebar-theme button[class*="border border-border"] {
+  border-color: #334155;
+}
+.sidebar-theme button[class*="border border-border"]:hover {
+  background-color: #21262D;
+  border-color: #F97316;
+}
+
+/* ---- Sidebar theme card adjustments ---- */
+.sidebar-theme .border-border {
+  border-color: #334155;
+}
+.sidebar-theme .bg-card {
+  background-color: #161B22;
+}
+
+/* ---- Sidebar theme input adjustments ---- */
+.sidebar-theme input,
+.sidebar-theme textarea {
+  background-color: #0D1117;
+  border-color: #334155;
+  color: #e5e7eb;
+}
+.sidebar-theme input:focus,
+.sidebar-theme textarea:focus {
+  border-color: #F97316;
+  outline-color: #F97316;
+}
+
+/* ---- Sidebar theme text adjustments ---- */
+.sidebar-theme .text-muted-foreground {
+  color: #9ca3af;
+}
+.sidebar-theme .text-foreground {
+  color: #e5e7eb;
+}
+
 /* ---- Global body ---- */
 body {
   margin: 0;

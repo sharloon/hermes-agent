@@ -1323,7 +1323,7 @@ class BasePlatformAdapter(ABC):
         )
         ext_part = '|'.join(e.lstrip('.') for e in _LOCAL_MEDIA_EXTS)
 
-        # (?<![/:\w.]) prevents matching inside URLs (e.g. https://…/img.png)
+        # (?<![/:\w.]) prevents matching inside URLs (e.g. https://…/左侧菜单栏样式.png)
         #             and relative paths (./foo.png)
         # (?:~/|/)    anchors to absolute or home-relative paths
         path_re = re.compile(

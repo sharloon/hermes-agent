@@ -28,7 +28,8 @@
       "Bash(sqlite3 ~/.hermes/user_data.db \"SELECT id, owner_id, name, visibility, status FROM skills;\")",
       "Bash(find \"\\\\\\\\wsl.localhost\\\\Ubuntu-24.04\\\\home\\\\sharloon\\\\.hermes\\\\skills\" -name \"SKILL.md\")",
       "Bash(sqlite3 *)",
-      "Bash(wslpath *)"
+      "Bash(wslpath *)",
+      "Bash(cd \"\\\\\\\\wsl.localhost\\\\Ubuntu-24.04\\\\home\\\\sharloon\\\\hermes-agent\\\\\\\\web\")"
     ]
   }
 }

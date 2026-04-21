@@ -88,6 +88,112 @@ def list_skills(
     return db.list_skills(owner_id=current_user["id"])
 
 
+# ── All public skills (builtin + user published) ────────────────────────────────
+
+class PublicSkillInfo(BaseModel):
+    name: str
+    description: Optional[str] = ""
+    category: Optional[str] = None
+    source: str  # "builtin" or "user_published"
+    id: Optional[str] = None  # Only for user_published skills
+    owner_id: Optional[str] = None  # Only for user_published skills
+    can_remove: bool = False  # Only admin can remove user_published skills
+
+
+@router.get("/all-public", response_model=List[PublicSkillInfo])
+def list_all_public_skills():
+    """Merge builtin skills + user published skills for PublicSkillsPage."""
+    from tools.skills_tool import _find_all_skills
+
+    # 1. Builtin skills from filesystem
+    builtin_skills = _find_all_skills(skip_disabled=True)
+
+    # 2. User published skills from database
+    db = get_user_db()
+    user_skills = db.list_skills(visibility="public", status="published")
+
+    # 3. Merge with source marking
+    result = []
+    for s in builtin_skills:
+        result.append({
+            "name": s.get("name", ""),
+            "description": s.get("description", ""),
+            "category": s.get("category"),
+            "source": "builtin",
+            "id": None,
+            "owner_id": None,
+            "can_remove": False,
+        })
+    for s in user_skills:
+        result.append({
+            "name": s.get("name", ""),
+            "description": s.get("description", ""),
+            "category": "user_published",
+            "source": "user_published",
+            "id": s.get("id"),
+            "owner_id": s.get("owner_id"),
+            "can_remove": True,  # Admin can remove
+        })
+
+    return result
+
+
+@router.get("/selectable", response_model=List[dict])
+def list_selectable_skills(
+    current_user: dict = Depends(get_current_user),
+    db: UserDataDB = Depends(get_user_db),
+):
+    """List skills user can select for chat context (builtin + own skills + public skills)."""
+    from tools.skills_tool import _find_all_skills
+
+    result = []
+
+    # 1. Builtin skills from filesystem
+    builtin_skills = _find_all_skills(skip_disabled=True)
+    for s in builtin_skills:
+        skill_file = s.get("file")
+        skill_content = ""
+        if skill_file and skill_file.exists():
+            try:
+                skill_content = skill_file.read_text(encoding="utf-8")
+            except Exception:
+                pass
+        result.append({
+            "id": f"builtin:{s.get('name', '')}",
+            "owner_id": "system",
+            "name": s.get("name", ""),
+            "description": s.get("description", ""),
+            "visibility": "public",
+            "status": "published",
+            "skill_content": skill_content,
+            "created_at": 0,
+            "updated_at": 0,
+            "published_at": None,
+            "source": "builtin",
+        })
+
+    # 2. User's own skills (private + published)
+    own_skills = db.list_skills(owner_id=current_user["id"])
+    for skill_id in [s["id"] for s in own_skills]:
+        skill = db.get_skill(skill_id)
+        if skill:
+            skill["source"] = "own"
+            result.append(skill)
+
+    # 3. Public skills from other users
+    public_skills = db.list_skills(visibility="public", status="published")
+    other_public = [s for s in public_skills if s["owner_id"] != current_user["id"]]
+    for skill_id in [s["id"] for s in other_public]:
+        skill = db.get_skill(skill_id)
+        if skill:
+            skill["source"] = "public"
+            result.append(skill)
+
+    return result
+
+
+# ── Dynamic skill endpoints (must be after static routes) ──────────────────────
+
 @router.get("/{skill_id}", response_model=SkillDetail)
 def get_skill(
     skill_id: str,
@@ -191,56 +297,6 @@ def unpublish_skill(
         published_at=None,
     )
     return updated
-
-
-# ── All public skills (builtin + user published) ────────────────────────────────
-
-class PublicSkillInfo(BaseModel):
-    name: str
-    description: Optional[str] = ""
-    category: Optional[str] = None
-    source: str  # "builtin" or "user_published"
-    id: Optional[str] = None  # Only for user_published skills
-    owner_id: Optional[str] = None  # Only for user_published skills
-    can_remove: bool = False  # Only admin can remove user_published skills
-
-
-@router.get("/all-public", response_model=List[PublicSkillInfo])
-def list_all_public_skills():
-    """Merge builtin skills + user published skills for PublicSkillsPage."""
-    from tools.skills_tool import _find_all_skills
-
-    # 1. Builtin skills from filesystem
-    builtin_skills = _find_all_skills(skip_disabled=True)
-
-    # 2. User published skills from database
-    db = get_user_db()
-    user_skills = db.list_skills(visibility="public", status="published")
-
-    # 3. Merge with source marking
-    result = []
-    for s in builtin_skills:
-        result.append({
-            "name": s.get("name", ""),
-            "description": s.get("description", ""),
-            "category": s.get("category"),
-            "source": "builtin",
-            "id": None,
-            "owner_id": None,
-            "can_remove": False,
-        })
-    for s in user_skills:
-        result.append({
-            "name": s.get("name", ""),
-            "description": s.get("description", ""),
-            "category": "user_published",
-            "source": "user_published",
-            "id": s.get("id"),
-            "owner_id": s.get("owner_id"),
-            "can_remove": True,  # Admin can remove
-        })
-
-    return result
 
 
 # ── Admin: remove user published skill ───────────────────────────────────────

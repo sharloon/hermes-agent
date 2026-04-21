@@ -1,9 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Send, Plus, Paperclip, X, ChevronRight, MessageSquare, Loader2 } from "lucide-react";
+import { Send, Plus, Paperclip, X, ChevronDown, Sparkles, Loader2, Bot, User, Package } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
-import { eConversations, eFiles } from "@/lib/enterpriseApi";
-import type { SessionSummary, MessageItem, FileInfo } from "@/lib/enterpriseApi";
-import { Card } from "@/components/ui/card";
+import { eConversations, eFiles, eSkills } from "@/lib/enterpriseApi";
+import type { SessionSummary, MessageItem, FileInfo, SelectableSkill } from "@/lib/enterpriseApi";
 import { Button } from "@/components/ui/button";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -27,27 +26,241 @@ function fmtSize(bytes: number | null) {
 function MessageBubble({ msg }: { msg: MessageItem & { pending?: boolean } }) {
   const isUser = msg.role === "user";
   return (
-    <div className={`flex ${isUser ? "justify-end" : "justify-start"} mb-3`}>
-      <div
-        className={`max-w-[75%] rounded-xl px-4 py-2.5 text-sm leading-relaxed whitespace-pre-wrap break-words ${
-          isUser
-            ? "bg-foreground text-background"
-            : "bg-muted text-foreground border border-border"
+    <div className={`flex ${isUser ? "justify-end" : "justify-start"} mb-4`}>
+      <div className={`flex items-start gap-3 max-w-[80%] ${isUser ? "flex-row-reverse" : ""}`}>
+        {/* Avatar */}
+        <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${
+          isUser ? "bg-[#F97316]" : "bg-[#21262D]"
+        }`}>
+          {isUser ? <User className="h-4 w-4 text-white" /> : <Bot className="h-4 w-4 text-gray-400" />}
+        </div>
+        {/* Message content */}
+        <div
+          className={`rounded-2xl px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap break-words ${
+            isUser
+              ? "bg-[#F97316] text-white"
+              : "bg-[#161B22] text-gray-200 border border-[#334155]"
+          }`}
+        >
+          {msg.pending ? (
+            <span className="flex items-center gap-2 text-gray-400">
+              <Loader2 className="h-4 w-4 animate-spin" /> 思考中…
+            </span>
+          ) : (
+            msg.content || ""
+          )}
+          {!msg.pending && (
+            <div className={`text-[0.65rem] mt-2 opacity-60 ${isUser ? "text-white/60" : "text-gray-500"}`}>
+              {fmtTime(msg.timestamp)}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Skill selector dropdown ───────────────────────────────────────────────────
+
+function SkillSelector({
+  skills,
+  selectedSkill,
+  onSelect,
+  isOpen,
+  onToggle,
+}: {
+  skills: SelectableSkill[];
+  selectedSkill: SelectableSkill | null;
+  onSelect: (skill: SelectableSkill | null) => void;
+  isOpen: boolean;
+  onToggle: () => void;
+}) {
+  // Group skills by source
+  const builtinSkills = skills.filter(s => s.source === "builtin");
+  const ownSkills = skills.filter(s => s.source === "own");
+  const publicSkills = skills.filter(s => s.source === "public");
+
+  return (
+    <div className="relative">
+      <button
+        onClick={onToggle}
+        className={`flex items-center gap-2 px-3 py-2 rounded-lg border transition-colors ${
+          selectedSkill
+            ? "bg-[#F97316]/20 border-[#F97316] text-[#F97316]"
+            : "bg-[#21262D] border-[#334155] text-gray-400 hover:border-gray-500 hover:text-gray-300"
         }`}
       >
-        {msg.pending ? (
-          <span className="flex items-center gap-2 text-muted-foreground">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" /> 思考中…
-          </span>
-        ) : (
-          msg.content || ""
-        )}
-        {!msg.pending && (
-          <div className={`text-[0.6rem] mt-1 opacity-50 ${isUser ? "text-right" : ""}`}>
-            {fmtTime(msg.timestamp)}
+        <Sparkles className="h-4 w-4" />
+        <span className="text-sm">{selectedSkill ? selectedSkill.name : "选择技能"}</span>
+        <ChevronDown className="h-3 w-3" />
+      </button>
+
+      {isOpen && (
+        <div className="absolute bottom-full left-0 mb-2 w-72 max-h-64 overflow-y-auto bg-[#161B22] border border-[#334155] rounded-xl shadow-xl z-20">
+          {/* Clear selection option */}
+          <button
+            onClick={() => { onSelect(null); onToggle(); }}
+            className="w-full text-left px-3 py-2 text-sm text-gray-400 hover:bg-[#21262D] hover:text-gray-200 border-b border-[#334155]"
+          >
+            不使用技能
+          </button>
+
+          {/* Builtin skills */}
+          {builtinSkills.length > 0 && (
+            <div className="border-b border-[#334155]">
+              <div className="px-3 py-1.5 text-xs text-gray-500 flex items-center gap-1">
+                <Package className="h-3 w-3" /> 内置技能
+              </div>
+              {builtinSkills.map((skill) => (
+                <button
+                  key={skill.id}
+                  onClick={() => { onSelect(skill); onToggle(); }}
+                  className={`w-full text-left px-3 py-2 hover:bg-[#21262D] ${
+                    selectedSkill?.id === skill.id
+                      ? "bg-[#F97316]/20 text-[#F97316]"
+                      : "text-gray-300 hover:text-gray-100"
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <Sparkles className="h-3.5 w-3.5 shrink-0" />
+                    <span className="text-sm font-medium truncate">{skill.name}</span>
+                  </div>
+                  {skill.description && (
+                    <p className="text-xs text-gray-500 mt-0.5 truncate pl-5">{skill.description}</p>
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Own skills */}
+          {ownSkills.length > 0 && (
+            <div className="border-b border-[#334155]">
+              <div className="px-3 py-1.5 text-xs text-gray-500 flex items-center gap-1">
+                <User className="h-3 w-3" /> 我的技能
+              </div>
+              {ownSkills.map((skill) => (
+                <button
+                  key={skill.id}
+                  onClick={() => { onSelect(skill); onToggle(); }}
+                  className={`w-full text-left px-3 py-2 hover:bg-[#21262D] ${
+                    selectedSkill?.id === skill.id
+                      ? "bg-[#F97316]/20 text-[#F97316]"
+                      : "text-gray-300 hover:text-gray-100"
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <Sparkles className="h-3.5 w-3.5 shrink-0" />
+                    <span className="text-sm font-medium truncate">{skill.name}</span>
+                    <span className="text-xs text-gray-500">{skill.visibility === "public" ? "公开" : "私有"}</span>
+                  </div>
+                  {skill.description && (
+                    <p className="text-xs text-gray-500 mt-0.5 truncate pl-5">{skill.description}</p>
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Public skills from others */}
+          {publicSkills.length > 0 && (
+            <div>
+              <div className="px-3 py-1.5 text-xs text-gray-500 flex items-center gap-1">
+                <Package className="h-3 w-3" /> 公共技能
+              </div>
+              {publicSkills.map((skill) => (
+                <button
+                  key={skill.id}
+                  onClick={() => { onSelect(skill); onToggle(); }}
+                  className={`w-full text-left px-3 py-2 hover:bg-[#21262D] ${
+                    selectedSkill?.id === skill.id
+                      ? "bg-[#F97316]/20 text-[#F97316]"
+                      : "text-gray-300 hover:text-gray-100"
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <Sparkles className="h-3.5 w-3.5 shrink-0" />
+                    <span className="text-sm font-medium truncate">{skill.name}</span>
+                  </div>
+                  {skill.description && (
+                    <p className="text-xs text-gray-500 mt-0.5 truncate pl-5">{skill.description}</p>
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Empty state */}
+          {skills.length === 0 && (
+            <p className="text-xs text-gray-500 px-3 py-4 text-center">暂无可用技能</p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── File selector dropdown ────────────────────────────────────────────────────
+
+function FileSelector({
+  files,
+  selectedIds,
+  onToggleId,
+  isOpen,
+  onToggle,
+}: {
+  files: FileInfo[];
+  selectedIds: string[];
+  onToggleId: (id: string) => void;
+  isOpen: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <div className="relative">
+      <button
+        onClick={onToggle}
+        className={`flex items-center gap-2 px-3 py-2 rounded-lg border transition-colors ${
+          selectedIds.length > 0
+            ? "bg-[#F97316]/20 border-[#F97316] text-[#F97316]"
+            : "bg-[#21262D] border-[#334155] text-gray-400 hover:border-gray-500 hover:text-gray-300"
+        }`}
+      >
+        <Paperclip className="h-4 w-4" />
+        <span className="text-sm">{selectedIds.length > 0 ? `${selectedIds.length} 文件` : "附件"}</span>
+      </button>
+
+      {isOpen && (
+        <div className="absolute bottom-full left-0 mb-2 w-72 max-h-60 overflow-y-auto bg-[#161B22] border border-[#334155] rounded-xl shadow-xl z-20 p-3">
+          <p className="text-xs text-gray-500 mb-2">选择要附加的文件</p>
+          {files.length === 0 && (
+            <p className="text-xs text-gray-400 text-center py-4">暂无上传文件</p>
+          )}
+          {files.map((f) => (
+            <label
+              key={f.id}
+              className={`flex items-center gap-2 rounded-lg px-2 py-2 cursor-pointer ${
+                selectedIds.includes(f.id)
+                  ? "bg-[#F97316]/20"
+                  : "hover:bg-[#21262D]"
+              }`}
+            >
+              <input
+                type="checkbox"
+                checked={selectedIds.includes(f.id)}
+                onChange={() => onToggleId(f.id)}
+                className="rounded border-[#334155] text-[#F97316] focus:ring-[#F97316]"
+              />
+              <span className="text-sm text-gray-300 truncate flex-1">{f.filename}</span>
+              <span className="text-xs text-gray-500 shrink-0">{fmtSize(f.size_bytes)}</span>
+            </label>
+          ))}
+          <div className="border-t border-[#334155] mt-2 pt-2 flex justify-end">
+            <Button size="sm" variant="outline" onClick={onToggle} className="text-xs">
+              确认
+            </Button>
           </div>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -61,17 +274,22 @@ export default function ChatPage() {
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<(MessageItem & { pending?: boolean })[]>([]);
   const [userFiles, setUserFiles] = useState<FileInfo[]>([]);
+  const [selectableSkills, setSelectableSkills] = useState<SelectableSkill[]>([]);
   const [selectedFileIds, setSelectedFileIds] = useState<string[]>([]);
+  const [selectedSkill, setSelectedSkill] = useState<SelectableSkill | null>(null);
   const [showFilePicker, setShowFilePicker] = useState(false);
+  const [showSkillPicker, setShowSkillPicker] = useState(false);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showSidebar, setShowSidebar] = useState(true);
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  // Load sessions and user files on mount
+  // Load sessions, files and skills on mount
   useEffect(() => {
     eConversations.list().then(setSessions).catch(() => {});
     eFiles.list().then(setUserFiles).catch(() => {});
+    eSkills.listSelectable().then(setSelectableSkills).catch(() => {});
   }, []);
 
   // Scroll to bottom on new messages
@@ -82,6 +300,8 @@ export default function ChatPage() {
   const loadMessages = useCallback(async (sessionId: string) => {
     setActiveSessionId(sessionId);
     setMessages([]);
+    setSelectedSkill(null);
+    setSelectedFileIds([]);
     try {
       const msgs = await eConversations.messages(sessionId);
       setMessages(msgs.filter((m) => m.role === "user" || m.role === "assistant"));
@@ -93,6 +313,7 @@ export default function ChatPage() {
   const newChat = () => {
     setActiveSessionId(null);
     setMessages([]);
+    setSelectedSkill(null);
     setSelectedFileIds([]);
   };
 
@@ -108,6 +329,8 @@ export default function ChatPage() {
     setInput("");
     setError(null);
     setSending(true);
+    setShowFilePicker(false);
+    setShowSkillPicker(false);
 
     const userMsg: MessageItem & { pending?: boolean } = {
       role: "user",
@@ -128,6 +351,7 @@ export default function ChatPage() {
         text,
         activeSessionId,
         selectedFileIds,
+        selectedSkill?.id || null,
         (delta) => {
           assistantContent += delta;
           setMessages((prev) => {
@@ -159,7 +383,7 @@ export default function ChatPage() {
         // Refresh session list
         eConversations.list().then(setSessions).catch(() => {});
       }
-      setSelectedFileIds([]);
+      // Keep skill/file selection for next message
     } catch (err) {
       setMessages((prev) => prev.slice(0, -1)); // remove pending
       setError(err instanceof Error ? err.message : "发送失败");
@@ -176,43 +400,101 @@ export default function ChatPage() {
   };
 
   return (
-    <div className="flex h-[calc(100vh-8rem)] gap-4">
-      {/* ── 左侧：会话列表 ── */}
-      <div className="w-56 shrink-0 flex flex-col gap-2">
-        <Button variant="outline" size="sm" className="gap-1.5 w-full" onClick={newChat}>
-          <Plus className="h-3.5 w-3.5" /> 新对话
-        </Button>
-        <div className="flex-1 overflow-y-auto space-y-1 min-h-0">
-          {sessions.length === 0 && (
-            <p className="text-[0.7rem] text-muted-foreground text-center pt-6">暂无会话记录</p>
-          )}
-          {sessions.map((s) => (
+    <div className="flex h-[calc(100vh-3rem)] gap-0">
+      {/* ── 左侧：会话列表（可折叠） ── */}
+      {showSidebar && (
+        <div className="w-64 shrink-0 flex flex-col bg-[#161B22] border-r border-[#334155]">
+          {/* New chat button */}
+          <div className="p-3">
             <button
-              key={s.id}
-              onClick={() => loadMessages(s.id)}
-              className={`w-full text-left rounded-md px-2.5 py-2 text-xs transition-colors flex items-start gap-1.5 ${
-                s.id === activeSessionId
-                  ? "bg-foreground/10 text-foreground"
-                  : "text-muted-foreground hover:text-foreground hover:bg-foreground/5"
-              }`}
+              onClick={newChat}
+              className="w-full flex items-center gap-2 px-3 py-2.5 rounded-lg bg-[#21262D] border border-[#334155] text-gray-300 hover:bg-[#30363D] hover:text-white transition-colors"
             >
-              <MessageSquare className="h-3 w-3 mt-0.5 shrink-0" />
-              <span className="truncate">{s.title || "新对话"}</span>
-              <ChevronRight className="h-3 w-3 ml-auto shrink-0 opacity-40" />
+              <Plus className="h-4 w-4" />
+              <span className="text-sm font-medium">新建对话</span>
             </button>
-          ))}
-        </div>
-      </div>
+          </div>
 
-      {/* ── 右侧：对话区域 ── */}
-      <Card className="flex-1 flex flex-col overflow-hidden min-w-0">
-        {/* 消息列表 */}
-        <div className="flex-1 overflow-y-auto p-4 min-h-0">
+          {/* Session list */}
+          <div className="flex-1 overflow-y-auto px-2 pb-3">
+            {sessions.length === 0 && (
+              <p className="text-xs text-gray-500 text-center pt-8">暂无历史对话</p>
+            )}
+            {sessions.map((s) => (
+              <button
+                key={s.id}
+                onClick={() => loadMessages(s.id)}
+                className={`w-full text-left rounded-lg px-3 py-2.5 text-sm transition-colors mb-1 ${
+                  s.id === activeSessionId
+                    ? "bg-[#F97316]/20 text-[#F97316] border border-[#F97316]/30"
+                    : "text-gray-400 hover:bg-[#21262D] hover:text-gray-200"
+                }`}
+              >
+                <span className="truncate">{s.title || "新对话"}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── 右侧：对话主区域 ── */}
+      <div className="flex-1 flex flex-col min-w-0 bg-[#0D1117]">
+        {/* Header with sidebar toggle */}
+        <div className="flex items-center justify-between px-4 py-3 border-b border-[#334155]">
+          <button
+            onClick={() => setShowSidebar(!showSidebar)}
+            className="p-1.5 rounded-lg text-gray-400 hover:text-gray-200 hover:bg-[#21262D] transition-colors"
+          >
+            <ChevronDown className={`h-4 w-4 transition-transform ${showSidebar ? "-rotate-90" : "rotate-90"}`} />
+          </button>
+          <div className="flex items-center gap-2">
+            {selectedSkill && (
+              <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[#F97316]/20 text-[#F97316] text-xs">
+                <Sparkles className="h-3 w-3" />
+                {selectedSkill.name}
+                <button onClick={() => setSelectedSkill(null)} className="ml-0.5 hover:text-white">
+                  <X className="h-3 w-3" />
+                </button>
+              </span>
+            )}
+            {selectedFileIds.length > 0 && (
+              <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[#21262D] text-gray-300 text-xs">
+                <Paperclip className="h-3 w-3" />
+                {selectedFileIds.length} 文件
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Messages area */}
+        <div className="flex-1 overflow-y-auto px-4 py-6">
           {messages.length === 0 && !sending && (
-            <div className="h-full flex flex-col items-center justify-center text-muted-foreground gap-2">
-              <MessageSquare className="h-10 w-10 opacity-20" />
-              <p className="text-sm">开始一段新对话</p>
-              <p className="text-xs opacity-60">你好，{user?.username || user?.email}！有什么我可以帮你的吗？</p>
+            <div className="h-full flex flex-col items-center justify-center text-gray-400 gap-4">
+              <div className="w-16 h-16 rounded-full bg-[#21262D] flex items-center justify-center">
+                <Bot className="h-8 w-8 text-gray-500" />
+              </div>
+              <div className="text-center">
+                <p className="text-lg text-gray-300 mb-2">你好，{user?.username || user?.email}</p>
+                <p className="text-sm text-gray-500">有什么我可以帮你的吗？</p>
+              </div>
+              {/* Quick skill selection */}
+              {selectableSkills.length > 0 && (
+                <div className="mt-4 text-center">
+                  <p className="text-xs text-gray-500 mb-2">选择一个技能快速开始</p>
+                  <div className="flex flex-wrap gap-2 justify-center">
+                    {selectableSkills.slice(0, 4).map((skill) => (
+                      <button
+                        key={skill.id}
+                        onClick={() => setSelectedSkill(skill)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#21262D] text-gray-400 hover:bg-[#30363D] hover:text-gray-200 text-xs transition-colors"
+                      >
+                        <Sparkles className="h-3 w-3" />
+                        {skill.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
           {messages.map((msg, i) => (
@@ -221,106 +503,95 @@ export default function ChatPage() {
           <div ref={bottomRef} />
         </div>
 
-        {/* 已选文件标签 */}
-        {selectedFileIds.length > 0 && (
-          <div className="flex flex-wrap gap-1.5 px-4 pt-2 border-t border-border">
-            {selectedFileIds.map((id) => {
-              const f = userFiles.find((u) => u.id === id);
-              return (
-                <span
-                  key={id}
-                  className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-xs"
-                >
-                  <Paperclip className="h-3 w-3" />
-                  {f?.filename ?? id}
-                  <button onClick={() => toggleFile(id)} className="ml-0.5 opacity-60 hover:opacity-100">
-                    <X className="h-3 w-3" />
-                  </button>
-                </span>
-              );
-            })}
-          </div>
-        )}
-
-        {/* 错误提示 */}
+        {/* Error */}
         {error && (
-          <p className="text-xs text-destructive px-4 py-1">{error}</p>
+          <p className="text-xs text-red-400 px-4 py-2 bg-red-500/10">{error}</p>
         )}
 
-        {/* 输入区 */}
-        <div className="p-3 border-t border-border flex gap-2 items-end relative">
-          {/* 文件选择弹窗 */}
-          {showFilePicker && (
-            <div className="absolute bottom-full left-3 mb-1 w-72 max-h-60 overflow-y-auto bg-background border border-border rounded-lg shadow-lg z-10 p-2">
-              <p className="text-[0.65rem] font-display tracking-widest uppercase text-muted-foreground mb-2 px-1">
-                选择文件附加到对话
-              </p>
-              {userFiles.length === 0 && (
-                <p className="text-xs text-muted-foreground px-1">暂无上传文件，请先去「文件空间」上传</p>
-              )}
-              {userFiles.map((f) => (
-                <label
-                  key={f.id}
-                  className="flex items-center gap-2 rounded px-2 py-1.5 cursor-pointer hover:bg-muted text-sm"
-                >
-                  <input
-                    type="checkbox"
-                    checked={selectedFileIds.includes(f.id)}
-                    onChange={() => toggleFile(f.id)}
-                    className="rounded"
-                  />
-                  <span className="truncate flex-1">{f.filename}</span>
-                  <span className="text-[0.65rem] text-muted-foreground shrink-0">
-                    {fmtSize(f.size_bytes)}
-                  </span>
-                </label>
-              ))}
-              <div className="border-t border-border mt-2 pt-2 flex justify-end">
-                <Button size="sm" variant="outline" onClick={() => setShowFilePicker(false)}>
-                  确认
-                </Button>
-              </div>
-            </div>
-          )}
-
-          <Button
-            variant="outline"
-            size="sm"
-            className={`shrink-0 ${selectedFileIds.length > 0 ? "text-foreground" : "text-muted-foreground"}`}
-            onClick={() => setShowFilePicker((v) => !v)}
-            title="选择文件"
-          >
-            <Paperclip className="h-4 w-4" />
+        {/* Input area */}
+        <div className="px-4 py-3 border-t border-[#334155]">
+          <div className="max-w-3xl mx-auto">
+            {/* Selected files preview */}
             {selectedFileIds.length > 0 && (
-              <span className="ml-1 text-xs">{selectedFileIds.length}</span>
+              <div className="flex flex-wrap gap-1.5 mb-2">
+                {selectedFileIds.map((id) => {
+                  const f = userFiles.find((u) => u.id === id);
+                  return (
+                    <span
+                      key={id}
+                      className="inline-flex items-center gap-1 rounded-full bg-[#21262D] px-2 py-1 text-xs text-gray-400"
+                    >
+                      <Paperclip className="h-3 w-3" />
+                      {f?.filename ?? id}
+                      <button onClick={() => toggleFile(id)} className="ml-0.5 hover:text-white">
+                        <X className="h-3 w-3" />
+                      </button>
+                    </span>
+                  );
+                })}
+              </div>
             )}
-          </Button>
 
-          <textarea
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="输入消息… Enter 发送，Shift+Enter 换行"
-            rows={1}
-            className="flex-1 resize-none rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring min-h-[36px] max-h-[120px] overflow-y-auto"
-            style={{ height: "auto" }}
-            onInput={(e) => {
-              const t = e.currentTarget;
-              t.style.height = "auto";
-              t.style.height = Math.min(t.scrollHeight, 120) + "px";
-            }}
-          />
+            {/* Input box */}
+            <div className="relative flex items-end gap-2 p-3 rounded-2xl bg-[#161B22] border border-[#334155]">
+              {/* Attachment buttons */}
+              <div className="flex items-center gap-2 shrink-0">
+                <FileSelector
+                  files={userFiles}
+                  selectedIds={selectedFileIds}
+                  onToggleId={toggleFile}
+                  isOpen={showFilePicker}
+                  onToggle={() => { setShowFilePicker(!showFilePicker); setShowSkillPicker(false); }}
+                />
+                <SkillSelector
+                  skills={selectableSkills}
+                  selectedSkill={selectedSkill}
+                  onSelect={setSelectedSkill}
+                  isOpen={showSkillPicker}
+                  onToggle={() => { setShowSkillPicker(!showSkillPicker); setShowFilePicker(false); }}
+                />
+              </div>
 
-          <Button
-            size="sm"
-            onClick={sendMessage}
-            disabled={!input.trim() || sending}
-            className="shrink-0"
-          >
-            {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-          </Button>
+              {/* Textarea */}
+              <textarea
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder="输入消息，按 Enter 发送…"
+                rows={1}
+                className="flex-1 resize-none bg-transparent px-2 py-1.5 text-sm text-gray-200 placeholder:text-gray-500 focus:outline-none min-h-[36px] max-h-[120px] overflow-y-auto"
+                style={{ height: "auto" }}
+                onInput={(e) => {
+                  const t = e.currentTarget;
+                  t.style.height = "auto";
+                  t.style.height = Math.min(t.scrollHeight, 120) + "px";
+                }}
+              />
+
+              {/* Send button */}
+              <button
+                onClick={sendMessage}
+                disabled={!input.trim() || sending}
+                className={`shrink-0 w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${
+                  input.trim() && !sending
+                    ? "bg-[#F97316] text-white hover:bg-[#ea580c]"
+                    : "bg-[#21262D] text-gray-500"
+                }`}
+              >
+                {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+              </button>
+            </div>
+
+            {/* Helper text */}
+            <p className="text-xs text-gray-500 text-center mt-2">
+              {selectedSkill
+                ? `当前使用技能: ${selectedSkill.name}`
+                : "可选择技能或附加文件来增强对话"
+              }
+            </p>
+          </div>
         </div>
-      </Card>
+      </div>
     </div>
   );
 }

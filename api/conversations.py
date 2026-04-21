@@ -21,6 +21,7 @@ class SendMessageRequest(BaseModel):
     message: str
     session_id: Optional[str] = None   # None = new session
     file_ids: Optional[List[str]] = []  # user files to include in context
+    skill_id: Optional[str] = None     # skill to use as context
 
 
 class SessionSummary(BaseModel):
@@ -186,6 +187,31 @@ def _build_file_context(file_ids: List[str], user_id: str, db: UserDataDB) -> st
     return "\n".join(lines)
 
 
+def _build_skill_context(skill_id: str, user_id: str, db: UserDataDB) -> str:
+    """Build skill context to inject into the user message."""
+    if not skill_id:
+        return ""
+    skill = db.get_skill(skill_id)
+    if not skill:
+        return ""
+    # Check access: own skill or public skill
+    if skill["owner_id"] != user_id and skill.get("visibility") != "public":
+        return ""
+    skill_content = skill.get("skill_content", "")
+    if not skill_content:
+        return ""
+    skill_name = skill.get("name", "unnamed")
+    return f"""[使用技能 '{skill_name}' 来完成任务]
+
+以下是该技能的完整内容：
+
+{skill_content}
+
+---
+请按照上述技能的指引来处理用户的请求。
+"""
+
+
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @router.post("/send")
@@ -209,8 +235,11 @@ def send_message(
     session_id = req.session_id or str(uuid.uuid4())
     user_id = current_user["id"]
 
-    # Build message with optional file context
+    # Build message with optional file and skill context
     user_message = req.message
+    skill_ctx = _build_skill_context(req.skill_id, user_id, db)
+    if skill_ctx:
+        user_message = f"{skill_ctx}\n\n{user_message}"
     file_ctx = _build_file_context(req.file_ids or [], user_id, db)
     if file_ctx:
         user_message = f"{file_ctx}\n\n{user_message}"

@@ -125,7 +125,7 @@ class TestTelegramSendImageFile:
         """send_image_file should return error when bot is None."""
         adapter._bot = None
         result = _run(
-            adapter.send_image_file(chat_id="12345", image_path="/tmp/img.png")
+            adapter.send_image_file(chat_id="12345", image_path="/tmp/左侧菜单栏样式.png")
         )
         assert not result.success
         assert "Not connected" in result.error
@@ -280,7 +280,7 @@ class TestDiscordSendImageFile:
     def test_returns_error_when_not_connected(self, adapter):
         adapter._client = None
         result = _run(
-            adapter.send_image_file(chat_id="67890", image_path="/tmp/img.png")
+            adapter.send_image_file(chat_id="67890", image_path="/tmp/左侧菜单栏样式.png")
         )
         assert not result.success
         assert "Not connected" in result.error
@@ -290,7 +290,7 @@ class TestDiscordSendImageFile:
         adapter._client.fetch_channel = AsyncMock(return_value=None)
 
         result = _run(
-            adapter.send_image_file(chat_id="99999", image_path="/tmp/img.png")
+            adapter.send_image_file(chat_id="99999", image_path="/tmp/左侧菜单栏样式.png")
         )
         assert not result.success
         assert "not found" in result.error
@@ -353,7 +353,7 @@ class TestSlackSendImageFile:
     def test_returns_error_when_not_connected(self, adapter):
         adapter._app = None
         result = _run(
-            adapter.send_image_file(chat_id="C12345", image_path="/tmp/img.png")
+            adapter.send_image_file(chat_id="C12345", image_path="/tmp/左侧菜单栏样式.png")
         )
         assert not result.success
         assert "Not connected" in result.error
