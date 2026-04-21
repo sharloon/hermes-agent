@@ -50,9 +50,22 @@ logger = logging.getLogger(__name__)
 # (HERMES_HOME env var changes) are always respected.  The old module-level
 # constant was cached at import time and could go stale if a profile switch
 # happened after the first import.
-def get_memory_dir() -> Path:
-    """Return the profile-scoped memories directory."""
-    return get_hermes_home() / "memories"
+#
+# Multi-user support: each user has their own memory directory at
+# ~/.hermes/memories/{user_id}/. CLI/gateway mode (no user_id) uses the
+# global ~/.hermes/memories/ directory for backward compatibility.
+def get_memory_dir(user_id: str = None) -> Path:
+    """Return user-specific memories directory.
+
+    Args:
+        user_id: Optional user ID for multi-user isolation. If provided,
+                 returns ~/.hermes/memories/{user_id}/. If None (CLI/gateway),
+                 returns global ~/.hermes/memories/ for backward compatibility.
+    """
+    base = get_hermes_home() / "memories"
+    if user_id:
+        return base / user_id
+    return base
 
 ENTRY_DELIMITER = "\n§\n"
 
@@ -111,9 +124,18 @@ class MemoryStore:
         Never mutated mid-session. Keeps prefix cache stable.
       - memory_entries / user_entries: live state, mutated by tool calls, persisted to disk.
         Tool responses always reflect this live state.
+
+    Multi-user support: each user has their own memory directory. CLI/gateway mode
+    uses the global memory directory for backward compatibility.
     """
 
-    def __init__(self, memory_char_limit: int = 2200, user_char_limit: int = 1375):
+    def __init__(
+        self,
+        user_id: str = None,
+        memory_char_limit: int = 2200,
+        user_char_limit: int = 1375
+    ):
+        self._user_id = user_id  # User ID for multi-user isolation
         self.memory_entries: List[str] = []
         self.user_entries: List[str] = []
         self.memory_char_limit = memory_char_limit
@@ -123,7 +145,7 @@ class MemoryStore:
 
     def load_from_disk(self):
         """Load entries from MEMORY.md and USER.md, capture system prompt snapshot."""
-        mem_dir = get_memory_dir()
+        mem_dir = get_memory_dir(self._user_id)
         mem_dir.mkdir(parents=True, exist_ok=True)
 
         self.memory_entries = self._read_file(mem_dir / "MEMORY.md")
@@ -176,9 +198,9 @@ class MemoryStore:
                     pass
             fd.close()
 
-    @staticmethod
-    def _path_for(target: str) -> Path:
-        mem_dir = get_memory_dir()
+    def _path_for(self, target: str) -> Path:
+        """Return the file path for the given memory target."""
+        mem_dir = get_memory_dir(self._user_id)
         if target == "user":
             return mem_dir / "USER.md"
         return mem_dir / "MEMORY.md"
@@ -194,7 +216,8 @@ class MemoryStore:
 
     def save_to_disk(self, target: str):
         """Persist entries to the appropriate file. Called after every mutation."""
-        get_memory_dir().mkdir(parents=True, exist_ok=True)
+        mem_dir = get_memory_dir(self._user_id)
+        mem_dir.mkdir(parents=True, exist_ok=True)
         self._write_file(self._path_for(target), self._entries_for(target))
 
     def _entries_for(self, target: str) -> List[str]:

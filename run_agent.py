@@ -1227,6 +1227,7 @@ class AIAgent:
                 if self._memory_enabled or self._user_profile_enabled:
                     from tools.memory_tool import MemoryStore
                     self._memory_store = MemoryStore(
+                        user_id=self._user_id,  # Pass user_id for multi-user isolation
                         memory_char_limit=mem_config.get("memory_char_limit", 2200),
                         user_char_limit=mem_config.get("user_char_limit", 1375),
                     )
