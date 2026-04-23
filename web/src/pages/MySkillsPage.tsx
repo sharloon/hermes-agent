@@ -1,10 +1,10 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   Plus, Pencil, Trash2, DownloadCloud, RotateCcw,
-  ChevronDown, ChevronUp, Loader2,
+  ChevronDown, ChevronUp, Loader2, Upload, FolderOpen, File, Download,
 } from "lucide-react";
 import { eSkills } from "@/lib/enterpriseApi";
-import type { SkillSummary, SkillDetail } from "@/lib/enterpriseApi";
+import type { SkillSummary, SkillDetail, SkillFileInfo } from "@/lib/enterpriseApi";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -99,9 +99,12 @@ export default function MySkillsPage() {
   const [editingSkill, setEditingSkill] = useState<SkillDetail | null | "new">(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [expandedDetail, setExpandedDetail] = useState<SkillDetail | null>(null);
+  const [expandedFiles, setExpandedFiles] = useState<SkillFileInfo[]>([]);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [actionId, setActionId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const load = () => eSkills.listMine().then(setSkills).catch(() => setError("加载失败"));
 
@@ -139,11 +142,34 @@ export default function MySkillsPage() {
     finally { setActionId(null); }
   };
 
+  const handleUploadZip = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.name.endsWith(".zip")) {
+      setError("请上传 .zip 格式的压缩包");
+      return;
+    }
+    setUploading(true);
+    setError(null);
+    try {
+      await eSkills.uploadZip(file);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "上传失败");
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
   const toggleExpand = async (id: string) => {
-    if (expandedId === id) { setExpandedId(null); setExpandedDetail(null); return; }
+    if (expandedId === id) { setExpandedId(null); setExpandedDetail(null); setExpandedFiles([]); return; }
     setExpandedId(id);
     setLoadingDetail(true);
-    try { setExpandedDetail(await eSkills.get(id)); }
+    try {
+      setExpandedDetail(await eSkills.get(id));
+      setExpandedFiles(await eSkills.listFiles(id));
+    }
     catch { setError("加载详情失败"); }
     finally { setLoadingDetail(false); }
   };
@@ -151,6 +177,13 @@ export default function MySkillsPage() {
   const startEdit = async (id: string) => {
     const detail = await eSkills.get(id);
     setEditingSkill(detail);
+  };
+
+  const handleDownloadZip = async (skill: SkillSummary) => {
+    setActionId(skill.id);
+    try { await eSkills.downloadZip(skill.id, skill.name); }
+    catch { setError("下载失败"); }
+    finally { setActionId(null); }
   };
 
   return (
@@ -165,9 +198,28 @@ export default function MySkillsPage() {
           </p>
         </div>
         {editingSkill === null && (
-          <Button size="sm" onClick={() => setEditingSkill("new")} className="gap-1.5 shrink-0">
-            <Plus className="h-3.5 w-3.5" /> 新建技能
-          </Button>
+          <div className="flex gap-2 shrink-0">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".zip"
+              onChange={handleUploadZip}
+              className="hidden"
+            />
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={uploading}
+              className="gap-1.5"
+            >
+              {uploading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+              上传 Zip
+            </Button>
+            <Button size="sm" onClick={() => setEditingSkill("new")} className="gap-1.5">
+              <Plus className="h-3.5 w-3.5" /> 新建技能
+            </Button>
+          </div>
         )}
       </div>
 
@@ -188,7 +240,7 @@ export default function MySkillsPage() {
       {skills.length === 0 && editingSkill === null ? (
         <Card>
           <CardContent className="py-16 text-center">
-            <p className="text-sm text-muted-foreground">还没有私有技能，点击「新建技能」开始</p>
+            <p className="text-sm text-muted-foreground">还没有私有技能，点击「新建技能」或「上传 Zip」开始</p>
           </CardContent>
         </Card>
       ) : (
@@ -209,6 +261,17 @@ export default function MySkillsPage() {
                 </div>
 
                 <div className="flex items-center gap-1.5 shrink-0">
+                  {/* Download Zip */}
+                  <Button
+                    variant="outline" size="sm" title="下载为 Zip"
+                    onClick={() => handleDownloadZip(skill)}
+                    disabled={actionId === skill.id}
+                  >
+                    {actionId === skill.id
+                      ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      : <Download className="h-3.5 w-3.5" />}
+                  </Button>
+
                   {/* Publish / Unpublish */}
                   {skill.status === "draft" ? (
                     <Button
@@ -262,9 +325,30 @@ export default function MySkillsPage() {
                       <Loader2 className="h-4 w-4 animate-spin" /> 加载中…
                     </div>
                   ) : (
-                    <pre className="text-xs font-mono whitespace-pre-wrap break-words max-h-64 overflow-y-auto">
-                      {expandedDetail?.skill_content}
-                    </pre>
+                    <div className="space-y-3">
+                      {/* File tree */}
+                      {expandedFiles.length > 1 && (
+                        <div className="flex items-center gap-2 text-xs text-muted-foreground mb-2">
+                          <FolderOpen className="h-3.5 w-3.5" />
+                          <span>文件列表 ({expandedFiles.filter(f => !f.is_dir).length} 个文件)</span>
+                        </div>
+                      )}
+                      {expandedFiles.length > 1 && (
+                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5 mb-3">
+                          {expandedFiles.filter(f => !f.is_dir).map(f => (
+                            <div key={f.path} className="flex items-center gap-1.5 text-xs px-2 py-1 bg-muted/50 rounded">
+                              <File className="h-3 w-3 text-muted-foreground" />
+                              <span className="truncate">{f.path}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {/* SKILL.md content */}
+                      <div className="text-xs text-muted-foreground mb-1">SKILL.md 内容：</div>
+                      <pre className="text-xs font-mono whitespace-pre-wrap break-words max-h-64 overflow-y-auto bg-muted/50 p-2 rounded">
+                        {expandedDetail?.skill_content}
+                      </pre>
+                    </div>
                   )}
                 </div>
               )}

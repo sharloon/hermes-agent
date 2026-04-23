@@ -130,8 +130,12 @@ def _sync_private_skills_to_fs(user_id: str, db: UserDataDB) -> None:
 def _load_agent_config() -> dict:
     """Load minimal agent config from environment / hermes config.yaml."""
     try:
-        from hermes_cli.config import load_config
+        from hermes_cli.config import load_config, load_env
         cfg = load_config()
+        # Load .env into os.environ so subsequent os.getenv() calls see the values
+        for k, v in load_env().items():
+            if k not in os.environ:
+                os.environ[k] = v
     except Exception:
         cfg = {}
 
@@ -152,6 +156,14 @@ def _load_agent_config() -> dict:
     if provider == "alibaba":
         api_key = os.getenv("DASHSCOPE_API_KEY") or cfg.get("api_key", "")
         base_url = base_url or os.getenv("DASHSCOPE_BASE_URL") or "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    elif provider == "custom":
+        # api_key may be stored directly in config.yaml under model.api_key
+        api_key = (
+            model_cfg.get("api_key") if isinstance(model_cfg, dict) else None
+        ) or os.getenv("OPENAI_API_KEY") or cfg.get("api_key", "")
+        base_url = base_url or os.getenv("OPENAI_BASE_URL")
+        if not api_key:
+            api_key = "custom"  # some local endpoints don't require a real key
     else:
         # Default to Anthropic/OpenAI compatible
         api_key = (

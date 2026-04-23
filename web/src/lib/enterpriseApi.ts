@@ -223,6 +223,16 @@ export interface SelectableSkill extends SkillDetail {
   source: "builtin" | "own" | "public";
 }
 
+export interface SkillFileInfo {
+  path: string;
+  size: number;
+  is_dir: boolean;
+}
+
+export interface SkillZipUploadResult extends SkillSummary {
+  files: string[];
+}
+
 export const eSkills = {
   listMine: () => req<SkillSummary[]>("/skills"),
   listPublic: () => req<SkillSummary[]>("/skills?visibility=public"),
@@ -252,4 +262,44 @@ export const eSkills = {
 
   adminRemove: (id: string) =>
     req<{ ok: boolean; skill_id: string }>(`/skills/${id}/admin-remove`, { method: "DELETE" }),
+
+  // ── Zip upload API ────────────────────────────────────────────────────────────
+  uploadZip: (file: File) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    return req<SkillZipUploadResult>("/skills/upload-zip", { method: "POST", body: fd });
+  },
+
+  listFiles: (id: string) =>
+    req<SkillFileInfo[]>(`/skills/${id}/files`),
+
+  getFile: async (id: string, path: string): Promise<string> => {
+    const token = getToken();
+    const headers: Record<string, string> = {};
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    const res = await fetch(`${BASE}/skills/${id}/files/${path}`, { headers });
+    if (!res.ok) {
+      const text = await res.text().catch(() => res.statusText);
+      throw new Error(`${res.status}: ${text}`);
+    }
+    return res.text();
+  },
+
+  downloadZip: async (id: string, name: string): Promise<void> => {
+    const token = getToken();
+    const headers: Record<string, string> = {};
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    const res = await fetch(`${BASE}/skills/${id}/download`, { headers });
+    if (!res.ok) {
+      const text = await res.text().catch(() => res.statusText);
+      throw new Error(`${res.status}: ${text}`);
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${name}.zip`;
+    a.click();
+    URL.revokeObjectURL(url);
+  },
 };
