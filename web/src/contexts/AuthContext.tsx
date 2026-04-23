@@ -1,5 +1,12 @@
 import { createContext, useContext, useState, useEffect, useCallback } from "react";
-import { eAuth, getToken, setToken, clearToken } from "@/lib/enterpriseApi";
+import {
+  eAuth,
+  getToken,
+  setToken,
+  clearToken,
+  setRefreshToken,
+  setTokenExpiry,
+} from "@/lib/enterpriseApi";
 import type { UserProfile } from "@/lib/enterpriseApi";
 
 interface AuthState {
@@ -28,21 +35,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       .finally(() => setIsLoading(false));
   }, []);  // eslint-disable-line react-hooks/exhaustive-deps
 
-  const _saveTokens = useCallback((access: string) => {
+  const _saveTokens = useCallback((access: string, refresh: string) => {
     setToken(access);
+    setRefreshToken(refresh);
+    setTokenExpiry(60); // ACCESS_TOKEN_EXPIRE_MINUTES = 60
     setTokenState(access);
   }, []);
 
   const login = useCallback(async (email: string, password: string) => {
     const tokens = await eAuth.login(email, password);
-    _saveTokens(tokens.access_token);
+    _saveTokens(tokens.access_token, tokens.refresh_token);
     const profile = await eAuth.me();
     setUser(profile);
   }, [_saveTokens]);
 
   const register = useCallback(async (email: string, password: string, username?: string) => {
     const tokens = await eAuth.register(email, password, username);
-    _saveTokens(tokens.access_token);
+    _saveTokens(tokens.access_token, tokens.refresh_token);
     const profile = await eAuth.me();
     setUser(profile);
   }, [_saveTokens]);

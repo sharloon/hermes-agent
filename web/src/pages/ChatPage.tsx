@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Send, Plus, Paperclip, X, ChevronDown, Sparkles, Loader2, Bot, User, Package } from "lucide-react";
+import { Send, Plus, Paperclip, X, ChevronDown, Sparkles, Loader2, Bot, User, Package, Pencil } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { eConversations, eFiles, eSkills } from "@/lib/enterpriseApi";
 import type { SessionSummary, MessageItem, FileInfo, SelectableSkill } from "@/lib/enterpriseApi";
@@ -283,6 +283,8 @@ export default function ChatPage() {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showSidebar, setShowSidebar] = useState(true);
+  const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
+  const [editingTitle, setEditingTitle] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
 
   // Load sessions, files and skills on mount
@@ -311,10 +313,38 @@ export default function ChatPage() {
   }, []);
 
   const newChat = () => {
-    setActiveSessionId(null);
+    // Generate session_id upfront so first message has it
+    const newSessionId = crypto.randomUUID();
+    setActiveSessionId(newSessionId);
     setMessages([]);
     setSelectedSkill(null);
     setSelectedFileIds([]);
+  };
+
+  const startEditTitle = (sessionId: string, currentTitle: string) => {
+    setEditingSessionId(sessionId);
+    setEditingTitle(currentTitle || "");
+  };
+
+  const cancelEditTitle = () => {
+    setEditingSessionId(null);
+    setEditingTitle("");
+  };
+
+  const saveTitle = async (sessionId: string) => {
+    if (!editingTitle.trim()) return;
+    try {
+      await eConversations.updateTitle(sessionId, editingTitle.trim());
+      // Update local state
+      setSessions((prev) =>
+        prev.map((s) =>
+          s.id === sessionId ? { ...s, title: editingTitle.trim() } : s
+        )
+      );
+      cancelEditTitle();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "修改标题失败");
+    }
   };
 
   const toggleFile = (id: string) => {
@@ -378,11 +408,13 @@ export default function ChatPage() {
         return updated;
       });
 
-      if (!activeSessionId) {
+      // Update session_id from server response if it was null
+      if (!activeSessionId && result.session_id) {
         setActiveSessionId(result.session_id);
-        // Refresh session list
-        eConversations.list().then(setSessions).catch(() => {});
       }
+
+      // Refresh session list to show the new/updated session
+      eConversations.list().then(setSessions).catch(() => {});
       // Keep skill/file selection for next message
     } catch (err) {
       setMessages((prev) => prev.slice(0, -1)); // remove pending
@@ -421,17 +453,54 @@ export default function ChatPage() {
               <p className="text-xs text-gray-500 text-center pt-8">暂无历史对话</p>
             )}
             {sessions.map((s) => (
-              <button
+              <div
                 key={s.id}
-                onClick={() => loadMessages(s.id)}
-                className={`w-full text-left rounded-lg px-3 py-2.5 text-sm transition-colors mb-1 ${
+                className={`group w-full rounded-lg px-3 py-2.5 text-sm transition-colors mb-1 flex items-center gap-2 ${
                   s.id === activeSessionId
                     ? "bg-[#F97316]/20 text-[#F97316] border border-[#F97316]/30"
                     : "text-gray-400 hover:bg-[#21262D] hover:text-gray-200"
                 }`}
               >
-                <span className="truncate">{s.title || "新对话"}</span>
-              </button>
+                {editingSessionId === s.id ? (
+                  <>
+                    <input
+                      type="text"
+                      value={editingTitle}
+                      onChange={(e) => setEditingTitle(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") saveTitle(s.id);
+                        if (e.key === "Escape") cancelEditTitle();
+                      }}
+                      className="flex-1 bg-transparent border border-[#F97316] rounded px-1 py-0.5 text-sm focus:outline-none"
+                      autoFocus
+                    />
+                    <button
+                      onClick={() => saveTitle(s.id)}
+                      className="text-xs text-[#F97316] hover:text-white"
+                    >
+                      保存
+                    </button>
+                    <button onClick={cancelEditTitle} className="text-xs text-gray-400 hover:text-white">
+                      取消
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <span
+                      className="truncate flex-1 cursor-pointer"
+                      onClick={() => loadMessages(s.id)}
+                    >
+                      {s.title || "新对话"}
+                    </span>
+                    <button
+                      onClick={() => startEditTitle(s.id, s.title || "")}
+                      className="p-1 rounded hover:bg-[#30363D] transition-all group-hover:opacity-100 opacity-0"
+                    >
+                      <Pencil className="h-3 w-3 text-gray-400 hover:text-gray-200" />
+                    </button>
+                  </>
+                )}
+              </div>
             ))}
           </div>
         </div>

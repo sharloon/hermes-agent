@@ -2,6 +2,8 @@
 
 const BASE = "/api/v1";
 const TOKEN_KEY = "hermes_enterprise_token";
+const REFRESH_TOKEN_KEY = "hermes_enterprise_refresh_token";
+const TOKEN_EXPIRY_KEY = "hermes_enterprise_token_expiry";
 
 // ── Token helpers ─────────────────────────────────────────────────────────────
 
@@ -15,11 +17,92 @@ export function setToken(token: string): void {
 
 export function clearToken(): void {
   localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(REFRESH_TOKEN_KEY);
+  localStorage.removeItem(TOKEN_EXPIRY_KEY);
+}
+
+export function getRefreshToken(): string | null {
+  return localStorage.getItem(REFRESH_TOKEN_KEY);
+}
+
+export function setRefreshToken(token: string): void {
+  localStorage.setItem(REFRESH_TOKEN_KEY, token);
+}
+
+export function setTokenExpiry(expiryMinutes: number): void {
+  const expiryTime = Date.now() + expiryMinutes * 60 * 1000;
+  localStorage.setItem(TOKEN_EXPIRY_KEY, String(expiryTime));
+}
+
+export function isTokenExpiring(thresholdMinutes: number = 10): boolean {
+  const expiryStr = localStorage.getItem(TOKEN_EXPIRY_KEY);
+  if (!expiryStr) return false;
+  const expiryTime = parseInt(expiryStr, 10);
+  const threshold = thresholdMinutes * 60 * 1000;
+  return Date.now() > expiryTime - threshold;
+}
+
+// ── Token refresh ─────────────────────────────────────────────────────────────
+
+let refreshPromise: Promise<boolean> | null = null;
+
+async function doRefreshToken(): Promise<boolean> {
+  const refreshToken = getRefreshToken();
+  if (!refreshToken) return false;
+
+  try {
+    const res = await fetch(`${BASE}/auth/refresh`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ refresh_token: refreshToken }),
+    });
+
+    if (!res.ok) {
+      // Don't clear tokens here - let the 401 handler or AuthContext decide
+      return false;
+    }
+
+    const data = await res.json();
+    setToken(data.access_token);
+    setRefreshToken(data.refresh_token);
+    setTokenExpiry(60); // ACCESS_TOKEN_EXPIRE_MINUTES = 60
+    return true;
+  } catch {
+    // Don't clear tokens on network error - might be transient
+    return false;
+  }
+}
+
+async function ensureValidToken(): Promise<boolean> {
+  // If no token, nothing to refresh
+  if (!getToken()) return false;
+
+  // If refresh is already in progress, wait for it
+  if (refreshPromise) {
+    return refreshPromise;
+  }
+
+  // Check if token is expiring soon
+  if (isTokenExpiring(10)) {
+    refreshPromise = doRefreshToken();
+    const result = await refreshPromise;
+    refreshPromise = null;
+    return result;
+  }
+
+  return true;
 }
 
 // ── Core fetch ────────────────────────────────────────────────────────────────
 
 async function req<T>(path: string, init: RequestInit = {}): Promise<T> {
+  // Only check token expiry if we have a stored expiry time
+  // (users who logged in before we added this feature won't have it)
+  const expiryStr = localStorage.getItem(TOKEN_EXPIRY_KEY);
+  if (expiryStr && isTokenExpiring(10)) {
+    await ensureValidToken();
+  }
+
   const headers = new Headers(init.headers);
   const token = getToken();
   if (token) headers.set("Authorization", `Bearer ${token}`);
@@ -27,6 +110,36 @@ async function req<T>(path: string, init: RequestInit = {}): Promise<T> {
     headers.set("Content-Type", "application/json");
   }
   const res = await fetch(`${BASE}${path}`, { ...init, headers });
+
+  // On 401, try to refresh token and retry once
+  if (res.status === 401) {
+    const refreshToken = getRefreshToken();
+    if (refreshToken) {
+      const refreshed = await doRefreshToken();
+      if (refreshed) {
+        // Retry with new token
+        const newHeaders = new Headers(init.headers);
+        const newToken = getToken();
+        if (newToken) newHeaders.set("Authorization", `Bearer ${newToken}`);
+        if (!newHeaders.has("Content-Type") && !(init.body instanceof FormData)) {
+          newHeaders.set("Content-Type", "application/json");
+        }
+        const retryRes = await fetch(`${BASE}${path}`, { ...init, headers: newHeaders });
+        if (!retryRes.ok) {
+          // Retry failed - only clear tokens here
+          clearToken();
+          const text = await retryRes.text().catch(() => retryRes.statusText);
+          throw new Error(`${retryRes.status}: ${text}`);
+        }
+        if (retryRes.status === 204) return undefined as unknown as T;
+        return retryRes.json();
+      }
+    }
+    // No refresh token or refresh failed - only clear here
+    clearToken();
+    throw new Error(`401: Unauthorized`);
+  }
+
   if (!res.ok) {
     const text = await res.text().catch(() => res.statusText);
     throw new Error(`${res.status}: ${text}`);
@@ -114,6 +227,12 @@ export const eConversations = {
 
   messages: (sessionId: string) =>
     req<MessageItem[]>(`/conversations/${sessionId}/messages`),
+
+  updateTitle: (sessionId: string, title: string) =>
+    req<{ ok: boolean; title: string }>(`/conversations/${sessionId}/title`, {
+      method: "PATCH",
+      body: JSON.stringify({ title }),
+    }),
 
   /** Send a message with streaming SSE response.
    * @param onChunk - Called for each 'delta' event (text chunk)

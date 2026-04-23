@@ -1,6 +1,7 @@
 """Conversation API: create sessions, send messages, stream responses, list history."""
 
 import json
+import logging
 import os
 import queue
 import threading
@@ -16,6 +17,7 @@ from hermes_user_context import user_id_var
 from api.deps import get_current_user, get_user_db
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 # ── Schemas ───────────────────────────────────────────────────────────────────
 
@@ -38,6 +40,10 @@ class MessageItem(BaseModel):
     role: str
     content: Optional[str]
     timestamp: float
+
+
+class UpdateTitleRequest(BaseModel):
+    title: str
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -255,6 +261,10 @@ def send_message(
     session_id = req.session_id or str(uuid.uuid4())
     user_id = current_user["id"]
 
+    # Check if this is a new session (DB doesn't have it yet)
+    existing_session = session_db.get_session(session_id)
+    is_new_session = not existing_session
+
     # Build message with optional file and skill context
     user_message = req.message
     skill_ctx = _build_skill_context(req.skill_id, user_id, db)
@@ -295,14 +305,34 @@ def send_message(
 
             agent = AIAgent(**agent_kwargs)
 
+            # Load conversation history for existing sessions
+            conversation_history = None
+            if existing_session:
+                try:
+                    conversation_history = session_db.get_messages_as_conversation(session_id)
+                except Exception as e:
+                    logger.warning(f"Failed to load conversation history: {e}")
+
             # Use stream_callback only when streaming is enabled
             callback = stream_callback if req.stream else None
             result = agent.run_conversation(
                 user_message=user_message,
+                conversation_history=conversation_history,
                 stream_callback=callback,
             )
 
             result_holder["final_response"] = result.get("final_response", "")
+
+            # Auto-title: use first user message (truncated to 60 chars)
+            if is_new_session and req.message:
+                try:
+                    # Get title from first message, truncate and clean
+                    title = req.message.strip().replace("\n", " ")[:60]
+                    if len(req.message.strip()) > 60:
+                        title = title.rstrip() + "..."
+                    session_db.set_session_title(session_id, title)
+                except Exception as e:
+                    logger.warning(f"Failed to set auto-title: {e}")
         except Exception as e:
             import traceback
             result_holder["error"] = f"{str(e)}\n{traceback.format_exc()}"
@@ -374,5 +404,26 @@ def get_messages(
             (session_id,),
         ).fetchall()
         return [dict(r) for r in rows]
+    finally:
+        session_db.close()
+
+
+@router.patch("/{session_id}/title")
+def update_title(
+    session_id: str,
+    req: UpdateTitleRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """Update the title of a session owned by the current user."""
+    session_db = _get_session_db()
+    try:
+        session = session_db.get_session(session_id)
+        if not session or session.get("user_id") != current_user["id"]:
+            raise HTTPException(status_code=404, detail="Session not found")
+        try:
+            session_db.set_session_title(session_id, req.title)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        return {"ok": True, "title": req.title}
     finally:
         session_db.close()
