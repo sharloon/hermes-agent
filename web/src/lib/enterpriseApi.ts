@@ -115,13 +115,17 @@ export const eConversations = {
   messages: (sessionId: string) =>
     req<MessageItem[]>(`/conversations/${sessionId}/messages`),
 
-  /** Send a message and receive full response (non-streaming). */
+  /** Send a message with streaming SSE response.
+   * @param onChunk - Called for each 'delta' event (text chunk)
+   * @param stream - Enable streaming (default true). When false, waits for complete response.
+   */
   send: async (
     message: string,
     sessionId: string | null,
     fileIds: string[],
     skillId: string | null,
     onChunk?: (chunk: string) => void,
+    stream: boolean = true,
   ): Promise<{ content: string; session_id: string }> => {
     const token = getToken();
     const headers: Record<string, string> = {
@@ -129,12 +133,18 @@ export const eConversations = {
     };
     if (token) headers["Authorization"] = `Bearer ${token}`;
 
-    console.log("[eConversations.send] Sending message:", { message, sessionId, fileIds, skillId });
+    console.log("[eConversations.send] Sending message:", { message, sessionId, fileIds, skillId, stream });
 
     const res = await fetch(`${BASE}/conversations/send`, {
       method: "POST",
       headers,
-      body: JSON.stringify({ message, session_id: sessionId, file_ids: fileIds, skill_id: skillId }),
+      body: JSON.stringify({
+        message,
+        session_id: sessionId,
+        file_ids: fileIds,
+        skill_id: skillId,
+        stream,
+      }),
     });
 
     console.log("[eConversations.send] Response status:", res.status);

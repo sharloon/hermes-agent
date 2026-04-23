@@ -1184,7 +1184,7 @@ class AIAgent:
                         "reasoning_config": reasoning_config,
                         "max_tokens": max_tokens,
                     },
-                    user_id=None,
+                    user_id=self._user_id,
                     parent_session_id=self._parent_session_id,
                 )
             except Exception as e:
@@ -7189,6 +7189,7 @@ class AIAgent:
                     session_id=self.session_id,
                     source=self.platform or os.environ.get("HERMES_SESSION_SOURCE", "cli"),
                     model=self.model,
+                    user_id=self._user_id,
                     parent_session_id=old_session_id,
                 )
                 # Auto-number the title for the continuation session

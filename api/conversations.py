@@ -2,6 +2,8 @@
 
 import json
 import os
+import queue
+import threading
 import uuid
 from typing import List, Optional
 
@@ -22,6 +24,7 @@ class SendMessageRequest(BaseModel):
     session_id: Optional[str] = None   # None = new session
     file_ids: Optional[List[str]] = []  # user files to include in context
     skill_id: Optional[str] = None     # skill to use as context
+    stream: bool = True                # enable streaming response (SSE deltas)
 
 
 class SessionSummary(BaseModel):
@@ -232,7 +235,12 @@ def send_message(
     current_user: dict = Depends(get_current_user),
     db: UserDataDB = Depends(get_user_db),
 ):
-    """Send a message and stream the agent response as SSE."""
+    """Send a message and stream the agent response as SSE.
+
+    When stream=True (default): sends 'delta' events with text chunks,
+    then a final 'done' event.
+    When stream=False: waits for complete response, sends single 'done' event.
+    """
     from run_agent import AIAgent
 
     cfg = _load_agent_config()
@@ -256,14 +264,21 @@ def send_message(
     if file_ctx:
         user_message = f"{file_ctx}\n\n{user_message}"
 
-    def event_stream():
-        # Set user context for tools that need it
+    # Queue for streaming deltas (None sentinel marks completion)
+    delta_queue: queue.Queue = queue.Queue()
+    result_holder: dict = {"final_response": "", "error": None}
+
+    def stream_callback(text: str) -> None:
+        """Put text delta in queue for SSE generator."""
+        if text:
+            delta_queue.put(text)
+
+    def run_agent_thread():
+        """Run AIAgent in background thread, feed deltas to queue."""
         user_id_var.set(user_id)
         try:
-            # Sync user's private skills to filesystem for discovery
             _sync_private_skills_to_fs(user_id, db)
 
-            # Build AIAgent kwargs
             agent_kwargs = {
                 "api_key": cfg["api_key"],
                 "model": cfg["model"],
@@ -275,30 +290,51 @@ def send_message(
                 "enabled_toolsets": ["hermes-api-server", "user_files"],
             }
 
-            # Add base_url if configured (for non-Anthropic providers)
             if cfg.get("base_url"):
                 agent_kwargs["base_url"] = cfg["base_url"]
 
             agent = AIAgent(**agent_kwargs)
 
-            # Run conversation without streaming (simpler for now)
+            # Use stream_callback only when streaming is enabled
+            callback = stream_callback if req.stream else None
             result = agent.run_conversation(
                 user_message=user_message,
-                stream_callback=None,
+                stream_callback=callback,
             )
 
-            # Send the complete response
-            # Note: AIAgent.run_conversation returns "final_response", not "response"
-            full_response = result.get("final_response", "")
-            yield f"data: {json.dumps({'type': 'done', 'content': full_response, 'session_id': session_id})}\n\n"
+            result_holder["final_response"] = result.get("final_response", "")
         except Exception as e:
             import traceback
-            error_detail = f"{str(e)}\n{traceback.format_exc()}"
-            yield f"data: {json.dumps({'type': 'error', 'detail': error_detail})}\n\n"
+            result_holder["error"] = f"{str(e)}\n{traceback.format_exc()}"
         finally:
-            # Don't reset token - just let it be garbage collected
-            # Resetting in a different async context causes ValueError
+            # Signal completion
+            delta_queue.put(None)
             session_db.close()
+
+    def event_stream():
+        """SSE generator: read from queue and emit events."""
+        # Start agent thread
+        thread = threading.Thread(target=run_agent_thread)
+        thread.start()
+
+        try:
+            while True:
+                item = delta_queue.get(timeout=300)  # 5 min timeout
+                if item is None:
+                    # Completion sentinel
+                    break
+                # Emit delta event
+                yield f"data: {json.dumps({'type': 'delta', 'content': item})}\n\n"
+
+            # Final event
+            if result_holder["error"]:
+                yield f"data: {json.dumps({'type': 'error', 'detail': result_holder['error']})}\n\n"
+            else:
+                yield f"data: {json.dumps({'type': 'done', 'content': result_holder['final_response'], 'session_id': session_id})}\n\n"
+        except queue.Empty:
+            yield f"data: {json.dumps({'type': 'error', 'detail': 'Response timeout'})}\n\n"
+        finally:
+            thread.join(timeout=1)
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
