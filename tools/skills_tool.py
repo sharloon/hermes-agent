@@ -601,6 +601,11 @@ def _find_all_skills(*, skip_disabled: bool = False) -> List[Dict[str, Any]]:
                 content = skill_md.read_text(encoding="utf-8")[:4000]
                 frontmatter, body = _parse_frontmatter(content)
 
+                # Skip private skills - they should not appear in public listings
+                visibility = frontmatter.get("visibility", "public")
+                if visibility == "private":
+                    continue
+
                 if not skill_matches_platform(frontmatter):
                     continue
 

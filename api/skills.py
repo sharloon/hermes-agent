@@ -640,18 +640,62 @@ def download_skill_zip(
     current_user: dict = Depends(get_current_user),
     db: UserDataDB = Depends(get_user_db),
 ):
-    """Download a skill as a zip archive."""
-    skill = db.get_skill(skill_id)
-    if not skill:
-        raise HTTPException(status_code=404, detail="Skill not found")
-    if skill["owner_id"] != current_user["id"] and skill.get("visibility") != "public":
-        raise HTTPException(status_code=403, detail="Access denied")
-
-    skill_dir = get_hermes_home() / "skills" / "private" / skill_id
-    if not skill_dir.exists():
-        raise HTTPException(status_code=404, detail="Skill directory not found")
-
+    """Download a skill as a zip archive (builtin or user skill)."""
+    from tools.skills_tool import _find_all_skills, SKILLS_DIR
+    from agent.skill_utils import get_external_skills_dirs
     from fastapi.responses import StreamingResponse
+
+    skill_name = None
+    skill_dir = None
+
+    # Handle builtin skills (id format: "builtin:name")
+    if skill_id.startswith("builtin:"):
+        skill_name = skill_id[7:]  # Remove "builtin:" prefix
+
+        # Find the skill directory in skills dirs
+        dirs_to_scan = []
+        if SKILLS_DIR.exists():
+            dirs_to_scan.append(SKILLS_DIR)
+        dirs_to_scan.extend(get_external_skills_dirs())
+
+        for scan_dir in dirs_to_scan:
+            # Look for skill by directory name or SKILL.md frontmatter name
+            for skill_md in scan_dir.rglob("SKILL.md"):
+                skill_candidate_dir = skill_md.parent
+                # Check directory name
+                if skill_candidate_dir.name == skill_name:
+                    skill_dir = skill_candidate_dir
+                    break
+                # Check frontmatter name
+                try:
+                    content = skill_md.read_text(encoding="utf-8")[:2000]
+                    from agent.skill_utils import parse_frontmatter
+                    fm, _ = parse_frontmatter(content)
+                    if fm.get("name") == skill_name:
+                        skill_dir = skill_candidate_dir
+                        break
+                except Exception:
+                    continue
+            if skill_dir:
+                break
+
+        if not skill_dir:
+            raise HTTPException(status_code=404, detail="Builtin skill not found")
+
+    else:
+        # Handle user skills
+        skill = db.get_skill(skill_id)
+        if not skill:
+            raise HTTPException(status_code=404, detail="Skill not found")
+        # Allow download for own skills or public skills
+        if skill["owner_id"] != current_user["id"] and skill.get("visibility") != "public":
+            raise HTTPException(status_code=403, detail="Access denied")
+
+        skill_name = skill.get("name", skill_id)
+        skill_dir = get_hermes_home() / "skills" / "private" / skill_id
+
+        if not skill_dir.exists():
+            raise HTTPException(status_code=404, detail="Skill directory not found")
 
     # Create zip in memory
     zip_buffer = io.BytesIO()
@@ -662,7 +706,6 @@ def download_skill_zip(
                 zf.write(path, rel_path)
 
     zip_buffer.seek(0)
-    skill_name = skill.get("name", skill_id)
 
     return StreamingResponse(
         zip_buffer,
