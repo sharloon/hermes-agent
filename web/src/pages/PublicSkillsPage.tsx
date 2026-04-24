@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Globe, Search, Loader2, User, Trash2, Package } from "lucide-react";
+import { Globe, Search, Loader2, User, Trash2, Package, Download } from "lucide-react";
 import { eSkills } from "@/lib/enterpriseApi";
 import type { PublicSkillInfo } from "@/lib/enterpriseApi";
 import { useAuth } from "@/contexts/AuthContext";
@@ -17,6 +17,7 @@ export default function PublicSkillsPage() {
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [removingId, setRemovingId] = useState<string | null>(null);
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const load = () => {
@@ -52,6 +53,19 @@ export default function PublicSkillsPage() {
       setError("下架失败");
     } finally {
       setRemovingId(null);
+    }
+  };
+
+  const handleDownload = async (skillId: string | null, skillName: string) => {
+    // For builtin skills, use "builtin:{name}" format
+    const id = skillId || `builtin:${skillName}`;
+    setDownloadingId(id);
+    try {
+      await eSkills.downloadZip(id, skillName);
+    } catch {
+      setError("下载失败");
+    } finally {
+      setDownloadingId(null);
     }
   };
 
@@ -129,6 +143,18 @@ export default function PublicSkillsPage() {
                       )}
                     </div>
                     <Badge variant="secondary" className="text-[0.6rem] shrink-0">内置</Badge>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      title="下载技能"
+                      className="shrink-0"
+                      onClick={() => handleDownload(skill.id, skill.name)}
+                      disabled={downloadingId === `builtin:${skill.name}`}
+                    >
+                      {downloadingId === `builtin:${skill.name}`
+                        ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        : <Download className="h-3.5 w-3.5" />}
+                    </Button>
                   </div>
                 </Card>
               ))}
@@ -161,6 +187,20 @@ export default function PublicSkillsPage() {
                       )}
                     </div>
                     <Badge variant="default" className="text-[0.6rem] shrink-0">用户发布</Badge>
+
+                    {/* Download button */}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      title="下载技能"
+                      className="shrink-0"
+                      onClick={() => handleDownload(skill.id, skill.name)}
+                      disabled={downloadingId === skill.id}
+                    >
+                      {downloadingId === skill.id
+                        ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        : <Download className="h-3.5 w-3.5" />}
+                    </Button>
 
                     {/* Admin: Remove button */}
                     {isAdmin && skill.can_remove && (

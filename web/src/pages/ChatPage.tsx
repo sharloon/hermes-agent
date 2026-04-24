@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Send, Plus, Paperclip, X, ChevronDown, Sparkles, Loader2, Bot, User, Package, Pencil } from "lucide-react";
+import { Send, Plus, Paperclip, X, ChevronDown, Sparkles, Loader2, Bot, User, Package, Pencil, Square, Trash2 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { eConversations, eFiles, eSkills } from "@/lib/enterpriseApi";
 import type { SessionSummary, MessageItem, FileInfo, SelectableSkill } from "@/lib/enterpriseApi";
@@ -75,10 +75,23 @@ function SkillSelector({
   isOpen: boolean;
   onToggle: () => void;
 }) {
-  // Group skills by source
-  const builtinSkills = skills.filter(s => s.source === "builtin");
-  const ownSkills = skills.filter(s => s.source === "own");
-  const publicSkills = skills.filter(s => s.source === "public");
+  const [searchQuery, setSearchQuery] = useState("");
+
+  // Clear search when dropdown closes
+  useEffect(() => {
+    if (!isOpen) setSearchQuery("");
+  }, [isOpen]);
+
+  // Filter skills by search query
+  const filteredSkills = skills.filter(s =>
+    s.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    (s.description && s.description.toLowerCase().includes(searchQuery.toLowerCase()))
+  );
+
+  // Group filtered skills by source, with own skills first
+  const ownSkills = filteredSkills.filter(s => s.source === "own");
+  const builtinSkills = filteredSkills.filter(s => s.source === "builtin");
+  const publicSkills = filteredSkills.filter(s => s.source === "public");
 
   return (
     <div className="relative">
@@ -96,104 +109,122 @@ function SkillSelector({
       </button>
 
       {isOpen && (
-        <div className="absolute bottom-full left-0 mb-2 w-72 max-h-64 overflow-y-auto bg-[#161B22] border border-[#334155] rounded-xl shadow-xl z-20">
-          {/* Clear selection option */}
-          <button
-            onClick={() => { onSelect(null); onToggle(); }}
-            className="w-full text-left px-3 py-2 text-sm text-gray-400 hover:bg-[#21262D] hover:text-gray-200 border-b border-[#334155]"
-          >
-            不使用技能
-          </button>
+        <div className="absolute bottom-full left-0 mb-2 w-72 max-h-64 overflow-hidden bg-[#161B22] border border-[#334155] rounded-xl shadow-xl z-20">
+          {/* Search input */}
+          <div className="px-3 py-2 border-b border-[#334155]">
+            <input
+              type="text"
+              placeholder="搜索技能..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full bg-[#21262D] border border-[#334155] rounded-lg px-3 py-1.5 text-sm text-gray-200 placeholder:text-gray-500 focus:outline-none focus:border-[#F97316]"
+              autoFocus
+            />
+          </div>
 
-          {/* Builtin skills */}
-          {builtinSkills.length > 0 && (
-            <div className="border-b border-[#334155]">
-              <div className="px-3 py-1.5 text-xs text-gray-500 flex items-center gap-1">
-                <Package className="h-3 w-3" /> 内置技能
+          {/* Skills list */}
+          <div className="max-h-48 overflow-y-auto">
+            {/* Clear selection option */}
+            <button
+              onClick={() => { onSelect(null); onToggle(); }}
+              className="w-full text-left px-3 py-2 text-sm text-gray-400 hover:bg-[#21262D] hover:text-gray-200"
+            >
+              不使用技能
+            </button>
+
+            {/* Own skills - shown first */}
+            {ownSkills.length > 0 && (
+              <div className="border-t border-[#334155]">
+                <div className="px-3 py-1.5 text-xs text-[#F97316] flex items-center gap-1">
+                  <User className="h-3 w-3" /> 我的技能
+                </div>
+                {ownSkills.map((skill) => (
+                  <button
+                    key={skill.id}
+                    onClick={() => { onSelect(skill); onToggle(); }}
+                    className={`w-full text-left px-3 py-2 hover:bg-[#21262D] ${
+                      selectedSkill?.id === skill.id
+                        ? "bg-[#F97316]/20 text-[#F97316]"
+                        : "text-gray-300 hover:text-gray-100"
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <Sparkles className="h-3.5 w-3.5 shrink-0" />
+                      <span className="text-sm font-medium truncate">{skill.name}</span>
+                      <span className="text-xs text-gray-500">{skill.visibility === "public" ? "公开" : "私有"}</span>
+                    </div>
+                    {skill.description && (
+                      <p className="text-xs text-gray-500 mt-0.5 truncate pl-5">{skill.description}</p>
+                    )}
+                  </button>
+                ))}
               </div>
-              {builtinSkills.map((skill) => (
-                <button
-                  key={skill.id}
-                  onClick={() => { onSelect(skill); onToggle(); }}
-                  className={`w-full text-left px-3 py-2 hover:bg-[#21262D] ${
-                    selectedSkill?.id === skill.id
-                      ? "bg-[#F97316]/20 text-[#F97316]"
-                      : "text-gray-300 hover:text-gray-100"
-                  }`}
-                >
-                  <div className="flex items-center gap-2">
-                    <Sparkles className="h-3.5 w-3.5 shrink-0" />
-                    <span className="text-sm font-medium truncate">{skill.name}</span>
-                  </div>
-                  {skill.description && (
-                    <p className="text-xs text-gray-500 mt-0.5 truncate pl-5">{skill.description}</p>
-                  )}
-                </button>
-              ))}
-            </div>
-          )}
+            )}
 
-          {/* Own skills */}
-          {ownSkills.length > 0 && (
-            <div className="border-b border-[#334155]">
-              <div className="px-3 py-1.5 text-xs text-gray-500 flex items-center gap-1">
-                <User className="h-3 w-3" /> 我的技能
+            {/* Builtin skills */}
+            {builtinSkills.length > 0 && (
+              <div className="border-t border-[#334155]">
+                <div className="px-3 py-1.5 text-xs text-gray-500 flex items-center gap-1">
+                  <Package className="h-3 w-3" /> 内置技能
+                </div>
+                {builtinSkills.map((skill) => (
+                  <button
+                    key={skill.id}
+                    onClick={() => { onSelect(skill); onToggle(); }}
+                    className={`w-full text-left px-3 py-2 hover:bg-[#21262D] ${
+                      selectedSkill?.id === skill.id
+                        ? "bg-[#F97316]/20 text-[#F97316]"
+                        : "text-gray-300 hover:text-gray-100"
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <Sparkles className="h-3.5 w-3.5 shrink-0" />
+                      <span className="text-sm font-medium truncate">{skill.name}</span>
+                    </div>
+                    {skill.description && (
+                      <p className="text-xs text-gray-500 mt-0.5 truncate pl-5">{skill.description}</p>
+                    )}
+                  </button>
+                ))}
               </div>
-              {ownSkills.map((skill) => (
-                <button
-                  key={skill.id}
-                  onClick={() => { onSelect(skill); onToggle(); }}
-                  className={`w-full text-left px-3 py-2 hover:bg-[#21262D] ${
-                    selectedSkill?.id === skill.id
-                      ? "bg-[#F97316]/20 text-[#F97316]"
-                      : "text-gray-300 hover:text-gray-100"
-                  }`}
-                >
-                  <div className="flex items-center gap-2">
-                    <Sparkles className="h-3.5 w-3.5 shrink-0" />
-                    <span className="text-sm font-medium truncate">{skill.name}</span>
-                    <span className="text-xs text-gray-500">{skill.visibility === "public" ? "公开" : "私有"}</span>
-                  </div>
-                  {skill.description && (
-                    <p className="text-xs text-gray-500 mt-0.5 truncate pl-5">{skill.description}</p>
-                  )}
-                </button>
-              ))}
-            </div>
-          )}
+            )}
 
-          {/* Public skills from others */}
-          {publicSkills.length > 0 && (
-            <div>
-              <div className="px-3 py-1.5 text-xs text-gray-500 flex items-center gap-1">
-                <Package className="h-3 w-3" /> 公共技能
+            {/* Public skills from others */}
+            {publicSkills.length > 0 && (
+              <div className="border-t border-[#334155]">
+                <div className="px-3 py-1.5 text-xs text-gray-500 flex items-center gap-1">
+                  <Package className="h-3 w-3" /> 公共技能
+                </div>
+                {publicSkills.map((skill) => (
+                  <button
+                    key={skill.id}
+                    onClick={() => { onSelect(skill); onToggle(); }}
+                    className={`w-full text-left px-3 py-2 hover:bg-[#21262D] ${
+                      selectedSkill?.id === skill.id
+                        ? "bg-[#F97316]/20 text-[#F97316]"
+                        : "text-gray-300 hover:text-gray-100"
+                    }`}
+                  >
+                    <div className="flex items-center gap-2">
+                      <Sparkles className="h-3.5 w-3.5 shrink-0" />
+                      <span className="text-sm font-medium truncate">{skill.name}</span>
+                    </div>
+                    {skill.description && (
+                      <p className="text-xs text-gray-500 mt-0.5 truncate pl-5">{skill.description}</p>
+                    )}
+                  </button>
+                ))}
               </div>
-              {publicSkills.map((skill) => (
-                <button
-                  key={skill.id}
-                  onClick={() => { onSelect(skill); onToggle(); }}
-                  className={`w-full text-left px-3 py-2 hover:bg-[#21262D] ${
-                    selectedSkill?.id === skill.id
-                      ? "bg-[#F97316]/20 text-[#F97316]"
-                      : "text-gray-300 hover:text-gray-100"
-                  }`}
-                >
-                  <div className="flex items-center gap-2">
-                    <Sparkles className="h-3.5 w-3.5 shrink-0" />
-                    <span className="text-sm font-medium truncate">{skill.name}</span>
-                  </div>
-                  {skill.description && (
-                    <p className="text-xs text-gray-500 mt-0.5 truncate pl-5">{skill.description}</p>
-                  )}
-                </button>
-              ))}
-            </div>
-          )}
+            )}
 
-          {/* Empty state */}
-          {skills.length === 0 && (
-            <p className="text-xs text-gray-500 px-3 py-4 text-center">暂无可用技能</p>
-          )}
+            {/* Empty state */}
+            {filteredSkills.length === 0 && searchQuery && (
+              <p className="text-xs text-gray-500 px-3 py-4 text-center">未找到匹配的技能</p>
+            )}
+            {skills.length === 0 && !searchQuery && (
+              <p className="text-xs text-gray-500 px-3 py-4 text-center">暂无可用技能</p>
+            )}
+          </div>
         </div>
       )}
     </div>
@@ -270,8 +301,14 @@ function FileSelector({
 export default function ChatPage() {
   const { user } = useAuth();
 
+  // Persist activeSessionId to localStorage
+  const ACTIVE_SESSION_KEY = "hermes_chat_active_session";
+
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
-  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const [activeSessionId, setActiveSessionIdState] = useState<string | null>(() => {
+    // Restore from localStorage on initial load
+    return localStorage.getItem(ACTIVE_SESSION_KEY);
+  });
   const [messages, setMessages] = useState<(MessageItem & { pending?: boolean })[]>([]);
   const [userFiles, setUserFiles] = useState<FileInfo[]>([]);
   const [selectableSkills, setSelectableSkills] = useState<SelectableSkill[]>([]);
@@ -287,12 +324,36 @@ export default function ChatPage() {
   const [editingTitle, setEditingTitle] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
 
+  // Wrapper for setActiveSessionId that also persists to localStorage
+  const setActiveSessionId = useCallback((id: string | null) => {
+    setActiveSessionIdState(id);
+    if (id) {
+      localStorage.setItem(ACTIVE_SESSION_KEY, id);
+    } else {
+      localStorage.removeItem(ACTIVE_SESSION_KEY);
+    }
+  }, []);
+
   // Load sessions, files and skills on mount
   useEffect(() => {
     eConversations.list().then(setSessions).catch(() => {});
     eFiles.list().then(setUserFiles).catch(() => {});
     eSkills.listSelectable().then(setSelectableSkills).catch(() => {});
   }, []);
+
+  // Auto-load messages for persisted activeSessionId on mount
+  useEffect(() => {
+    if (activeSessionId) {
+      eConversations.messages(activeSessionId)
+        .then((msgs) => {
+          setMessages(msgs.filter((m) => m.role === "user" || m.role === "assistant"));
+        })
+        .catch(() => {
+          // Session may not exist or belong to user, clear it
+          setActiveSessionId(null);
+        });
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Scroll to bottom on new messages
   useEffect(() => {
@@ -310,7 +371,7 @@ export default function ChatPage() {
     } catch {
       setError("加载消息失败");
     }
-  }, []);
+  }, [setActiveSessionId]);
 
   const newChat = () => {
     // Generate session_id upfront so first message has it
@@ -347,10 +408,48 @@ export default function ChatPage() {
     }
   };
 
+  const deleteSession = async (sessionId: string) => {
+    try {
+      await eConversations.delete(sessionId);
+      // Remove from local state
+      setSessions((prev) => prev.filter((s) => s.id !== sessionId));
+      // If deleted session was active, clear it
+      if (activeSessionId === sessionId) {
+        setActiveSessionId(null);
+        setMessages([]);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "删除失败");
+    }
+  };
+
   const toggleFile = (id: string) => {
     setSelectedFileIds((prev) =>
       prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
     );
+  };
+
+  const stopGeneration = async () => {
+    if (!activeSessionId) return;
+    try {
+      await eConversations.stop(activeSessionId);
+      setSending(false);
+      // Update pending message to show it was stopped
+      setMessages((prev) => {
+        const updated = [...prev];
+        if (updated.length > 0 && updated[updated.length - 1].pending) {
+          updated[updated.length - 1] = {
+            role: "assistant",
+            content: "[已停止]",
+            timestamp: Date.now() / 1000,
+            pending: false,
+          };
+        }
+        return updated;
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "停止失败");
+    }
   };
 
   const sendMessage = async () => {
@@ -498,6 +597,12 @@ export default function ChatPage() {
                     >
                       <Pencil className="h-3 w-3 text-gray-400 hover:text-gray-200" />
                     </button>
+                    <button
+                      onClick={() => deleteSession(s.id)}
+                      className="p-1 rounded hover:bg-red-500/20 transition-all group-hover:opacity-100 opacity-0"
+                    >
+                      <Trash2 className="h-3 w-3 text-gray-400 hover:text-red-400" />
+                    </button>
                   </>
                 )}
               </div>
@@ -637,18 +742,27 @@ export default function ChatPage() {
                 }}
               />
 
-              {/* Send button */}
-              <button
-                onClick={sendMessage}
-                disabled={!input.trim() || sending}
-                className={`shrink-0 w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${
-                  input.trim() && !sending
-                    ? "bg-[#F97316] text-white hover:bg-[#ea580c]"
-                    : "bg-[#21262D] text-gray-500"
-                }`}
-              >
-                {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-              </button>
+              {/* Send/Stop button */}
+              {sending ? (
+                <button
+                  onClick={stopGeneration}
+                  className="shrink-0 w-8 h-8 rounded-lg flex items-center justify-center bg-red-500/80 text-white hover:bg-red-500 transition-colors"
+                >
+                  <Square className="h-4 w-4" />
+                </button>
+              ) : (
+                <button
+                  onClick={sendMessage}
+                  disabled={!input.trim()}
+                  className={`shrink-0 w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${
+                    input.trim()
+                      ? "bg-[#F97316] text-white hover:bg-[#ea580c]"
+                      : "bg-[#21262D] text-gray-500"
+                  }`}
+                >
+                  <Send className="h-4 w-4" />
+                </button>
+              )}
             </div>
 
             {/* Helper text */}

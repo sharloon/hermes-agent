@@ -4,6 +4,7 @@ const BASE = "/api/v1";
 const TOKEN_KEY = "hermes_enterprise_token";
 const REFRESH_TOKEN_KEY = "hermes_enterprise_refresh_token";
 const TOKEN_EXPIRY_KEY = "hermes_enterprise_token_expiry";
+const ACTIVE_SESSION_KEY = "hermes_chat_active_session";
 
 // ── Token helpers ─────────────────────────────────────────────────────────────
 
@@ -19,6 +20,7 @@ export function clearToken(): void {
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(REFRESH_TOKEN_KEY);
   localStorage.removeItem(TOKEN_EXPIRY_KEY);
+  localStorage.removeItem(ACTIVE_SESSION_KEY);
 }
 
 export function getRefreshToken(): string | null {
@@ -232,6 +234,16 @@ export const eConversations = {
     req<{ ok: boolean; title: string }>(`/conversations/${sessionId}/title`, {
       method: "PATCH",
       body: JSON.stringify({ title }),
+    }),
+
+  stop: (sessionId: string) =>
+    req<{ ok: boolean; message: string }>(`/conversations/${sessionId}/stop`, {
+      method: "POST",
+    }),
+
+  delete: (sessionId: string) =>
+    req<{ ok: boolean; message: string }>(`/conversations/${sessionId}`, {
+      method: "DELETE",
     }),
 
   /** Send a message with streaming SSE response.

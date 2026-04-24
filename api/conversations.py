@@ -19,6 +19,31 @@ from api.deps import get_current_user, get_user_db
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
+# ── Running agents tracking ─────────────────────────────────────────────────────
+
+# Track running agents by session_id for interrupt support
+_running_agents: dict = {}  # session_id -> AIAgent instance
+_running_agents_lock = threading.Lock()
+
+
+def _register_agent(session_id: str, agent) -> None:
+    """Register a running agent for interrupt support."""
+    with _running_agents_lock:
+        _running_agents[session_id] = agent
+
+
+def _unregister_agent(session_id: str) -> None:
+    """Unregister a running agent."""
+    with _running_agents_lock:
+        _running_agents.pop(session_id, None)
+
+
+def _get_running_agent(session_id: str):
+    """Get a running agent by session_id."""
+    with _running_agents_lock:
+        return _running_agents.get(session_id)
+
+
 # ── Schemas ───────────────────────────────────────────────────────────────────
 
 class SendMessageRequest(BaseModel):
@@ -305,6 +330,9 @@ def send_message(
 
             agent = AIAgent(**agent_kwargs)
 
+            # Register running agent for interrupt support
+            _register_agent(session_id, agent)
+
             # Load conversation history for existing sessions
             conversation_history = None
             if existing_session:
@@ -337,7 +365,8 @@ def send_message(
             import traceback
             result_holder["error"] = f"{str(e)}\n{traceback.format_exc()}"
         finally:
-            # Signal completion
+            # Unregister agent and signal completion
+            _unregister_agent(session_id)
             delta_queue.put(None)
             session_db.close()
 
@@ -425,5 +454,59 @@ def update_title(
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         return {"ok": True, "title": req.title}
+    finally:
+        session_db.close()
+
+
+@router.post("/{session_id}/stop")
+def stop_session(
+    session_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    """Interrupt a running agent session."""
+    # Verify session belongs to user
+    session_db = _get_session_db()
+    try:
+        session = session_db.get_session(session_id)
+        if not session or session.get("user_id") != current_user["id"]:
+            raise HTTPException(status_code=404, detail="Session not found")
+    finally:
+        session_db.close()
+
+    # Get running agent and interrupt it
+    agent = _get_running_agent(session_id)
+    if agent:
+        agent.interrupt("Stop requested by user")
+        _unregister_agent(session_id)
+        return {"ok": True, "message": "Session stopped"}
+    else:
+        return {"ok": True, "message": "No running agent for this session"}
+
+
+@router.delete("/{session_id}")
+def delete_session(
+    session_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    """Delete a session and all its messages."""
+    # Verify session belongs to user
+    session_db = _get_session_db()
+    try:
+        session = session_db.get_session(session_id)
+        if not session or session.get("user_id") != current_user["id"]:
+            raise HTTPException(status_code=404, detail="Session not found")
+
+        # Stop any running agent first
+        agent = _get_running_agent(session_id)
+        if agent:
+            agent.interrupt("Session deleted")
+            _unregister_agent(session_id)
+
+        # Delete session from database
+        deleted = session_db.delete_session(session_id)
+        if deleted:
+            return {"ok": True, "message": "Session deleted"}
+        else:
+            raise HTTPException(status_code=404, detail="Session not found")
     finally:
         session_db.close()
