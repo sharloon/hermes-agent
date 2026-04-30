@@ -1,0 +1,101 @@
+# Hermes User Agent Full Container Image
+#
+# This image contains a complete Hermes Agent for per-user isolation.
+# Each user gets a dedicated container with:
+# - Full Hermes Agent code
+# - Python 3.11 + Node.js 20
+# - Git, curl, wget, vim, jq, sqlite3
+# - User-specific data directories
+#
+# Security:
+# - API Keys are NOT in the container (use LLM proxy on host)
+# - Only user's own workspace is mounted
+# - Runs with --cap-drop ALL --security-opt no-new-privileges
+#
+# Build:
+#   docker build -t hermes-user-agent-full:latest -f Dockerfile.user-agent-full .
+#
+# Data persistence (mounted from host):
+#   ~/.hermes/user-workspaces/{user_id}/workspace/  → /workspace/
+#   ~/.hermes/user-workspaces/{user_id}/memories/   → /root/.hermes/memories/
+#   ~/.hermes/user-workspaces/{user_id}/skills/     → /root/.hermes/skills/private/
+#   ~/.hermes/user-workspaces/{user_id}/sessions.db → /root/.hermes/sessions.db
+
+FROM python:3.11-slim
+
+LABEL maintainer="Hermes Agent"
+LABEL description="Full Hermes Agent container for user isolation"
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    curl \
+    wget \
+    vim \
+    jq \
+    sqlite3 \
+    procps \
+    htop \
+    tree \
+    zip \
+    unzip \
+    nodejs \
+    npm \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create Hermes directory structure
+RUN mkdir -p /root/.hermes/memories \
+    && mkdir -p /root/.hermes/skills/private \
+    && mkdir -p /root/.hermes/skills/public \
+    && mkdir -p /root/.hermes/user-workspaces \
+    && mkdir -p /workspace \
+    && mkdir -p /opt/hermes-agent
+
+# Set environment variables
+ENV HERMES_HOME=/root/.hermes
+ENV PYTHONUNBUFFERED=1
+
+# ── Docker Cache Optimization ───────────────────────────────────────────────
+# Copy dependency files FIRST (before source code) so Docker caches the pip install layer
+# Only re-installs when pyproject.toml or setup.py changes, NOT when source code changes
+WORKDIR /opt/hermes-agent
+
+# Copy only dependency configuration files
+COPY pyproject.toml setup.py* MANIFEST.in* requirements*.txt* /opt/hermes-agent/
+
+# Install dependencies (minimal subset for container - no heavy extras like voice/modal)
+# This layer is cached unless pyproject.toml changes
+RUN pip install --no-cache-dir \
+    anthropic \
+    openai \
+    requests \
+    pyyaml \
+    pydantic \
+    python-dotenv \
+    rich \
+    prompt_toolkit \
+    beautifulsoup4 \
+    lxml \
+    fire \
+    tenacity \
+    httpx \
+    jinja2 \
+    PyJWT \
+    exa-py \
+    edge-tts \
+    fastapi \
+    uvicorn \
+    bcrypt \
+    && pip install --no-cache-dir -e . --no-deps
+
+# Now copy the source code (this layer changes frequently, but doesn't trigger pip reinstall)
+COPY . /opt/hermes-agent
+
+# Re-install in editable mode to register the package properly
+RUN pip install --no-cache-dir -e . --no-deps
+
+# Set working directory to user workspace
+WORKDIR /workspace
+
+# Keep container running (commands sent via docker exec)
+CMD ["sleep", "infinity"]

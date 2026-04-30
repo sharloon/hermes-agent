@@ -21,24 +21,37 @@ RUN useradd -u 10000 -m -d /opt/data hermes
 COPY --chmod=0755 --from=gosu_source /gosu /usr/local/bin/
 COPY --chmod=0755 --from=uv_source /usr/local/bin/uv /usr/local/bin/uvx /usr/local/bin/
 
-COPY . /opt/hermes
 WORKDIR /opt/hermes
 
-# Install Node dependencies and Playwright as root (--with-deps needs apt)
+# ── Docker Cache Optimization ───────────────────────────────────────────────
+# Copy dependency files FIRST, install dependencies, THEN copy source code
+# This way pip install is cached unless pyproject.toml changes
+
+# Step 1: Copy only dependency configuration files
+COPY pyproject.toml setup.py* MANIFEST.in* requirements*.txt* package.json package-lock.json* /opt/hermes/
+
+# Step 2: Install Node dependencies (cached unless package.json changes)
 RUN npm install --prefer-offline --no-audit && \
-    npx playwright install --with-deps chromium --only-shell && \
+    npm cache clean --force || true
+
+# Step 3: Install Python dependencies (cached unless pyproject.toml changes)
+RUN chown -R hermes:hermes /opt/hermes
+USER hermes
+RUN uv venv && \
+    uv pip install --no-cache-dir ".[all]"
+USER root
+
+# Step 4: Now copy source code (frequent changes don't trigger pip reinstall)
+COPY . /opt/hermes
+
+# Step 5: Install Playwright and WhatsApp bridge (after code copy since they need code)
+RUN npx playwright install --with-deps chromium --only-shell && \
     cd /opt/hermes/scripts/whatsapp-bridge && \
     npm install --prefer-offline --no-audit && \
     npm cache clean --force
 
-# Hand ownership to hermes user, then install Python deps in a virtualenv
+# Final setup
 RUN chown -R hermes:hermes /opt/hermes
-USER hermes
-
-RUN uv venv && \
-    uv pip install --no-cache-dir -e ".[all]"
-
-USER root
 RUN chmod +x /opt/hermes/docker/entrypoint.sh
 
 ENV HERMES_HOME=/opt/data

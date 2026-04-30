@@ -10,6 +10,7 @@ def create_app() -> FastAPI:
     from api.files import router as files_router
     from api.conversations import router as conv_router
     from api.skills import router as skills_router
+    from api.llm_proxy import router as llm_proxy_router
 
     app = FastAPI(
         title="Hermes Agent API",
@@ -30,6 +31,8 @@ def create_app() -> FastAPI:
     app.include_router(files_router, prefix="/api/v1/files", tags=["files"])
     app.include_router(conv_router, prefix="/api/v1/conversations", tags=["conversations"])
     app.include_router(skills_router, prefix="/api/v1/skills", tags=["skills"])
+    # Internal LLM proxy (for containerized agents)
+    app.include_router(llm_proxy_router, prefix="/internal/llm-proxy", tags=["llm-proxy"])
 
     return app
 

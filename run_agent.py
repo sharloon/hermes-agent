@@ -614,6 +614,9 @@ class AIAgent:
         checkpoint_max_snapshots: int = 50,
         pass_session_id: bool = False,
         persist_session: bool = True,
+        user_container: "DockerEnvironment" = None,  # User isolation container for API mode
+        llm_proxy_url: str = None,  # LLM proxy URL (for containerized agents)
+        llm_proxy_token: str = None,  # LLM proxy auth token
     ):
         """
         Initialize the AI Agent.
@@ -668,6 +671,9 @@ class AIAgent:
         self.ephemeral_system_prompt = ephemeral_system_prompt
         self.platform = platform  # "cli", "telegram", "discord", "whatsapp", etc.
         self._user_id = user_id  # Platform user identifier (gateway sessions)
+        self._user_container = user_container  # Docker container for user isolation (API mode)
+        self._llm_proxy_url = llm_proxy_url  # LLM proxy URL (for containerized agents)
+        self._llm_proxy_token = llm_proxy_token  # LLM proxy auth token
         self._gateway_session_key = gateway_session_key  # Stable per-chat key (e.g. agent:main:telegram:dm:123)
         # Pluggable print function — CLI replaces this with _cprint so that
         # raw ANSI status lines are routed through prompt_toolkit's renderer
@@ -687,6 +693,33 @@ class AIAgent:
         self.provider = provider_name or ""
         self.acp_command = acp_command or command
         self.acp_args = list(acp_args or args or [])
+
+        # ── Load model from config.yaml if not specified ─────────────────────────────
+        # When running in container/API mode, model may be empty.
+        # Try to load default from config.yaml.
+        if not self.model:
+            try:
+                from hermes_cli.config import load_config
+                config = load_config()
+                model_cfg = config.get("model", {})
+                if isinstance(model_cfg, dict):
+                    default_model = model_cfg.get("default", "") or ""
+                    if default_model:
+                        self.model = default_model
+                        cfg_provider = model_cfg.get("provider", "") or ""
+                        cfg_base_url = model_cfg.get("base_url", "") or ""
+                        if not self.provider and cfg_provider:
+                            self.provider = cfg_provider.strip().lower()
+                        if not self.base_url and cfg_base_url:
+                            self.base_url = cfg_base_url
+                        if not self.quiet_mode:
+                            print(f"📋 Loaded model from config: {self.model} (provider={self.provider})")
+                elif isinstance(model_cfg, str) and model_cfg:
+                    self.model = model_cfg
+                    if not self.quiet_mode:
+                        print(f"📋 Loaded model from config: {self.model}")
+            except Exception as e:
+                logger.warning(f"Could not load model from config: {e}")
         if api_mode in {"chat_completions", "codex_responses", "anthropic_messages", "bedrock_converse"}:
             self.api_mode = api_mode
         elif self.provider == "openai-codex":
@@ -900,7 +933,24 @@ class AIAgent:
         self._anthropic_client = None
         self._is_anthropic_oauth = False
 
-        if self.api_mode == "anthropic_messages":
+        # ── LLM Proxy Mode (Container) ─────────────────────────────────────────
+        # Check FIRST before any other provider/client setup.
+        # When llm_proxy_url is configured, all LLM calls go through the proxy.
+        if self._llm_proxy_url and self._llm_proxy_token:
+            # Use a dummy client - actual calls go through proxy
+            client_kwargs = {
+                "api_key": "proxy-mode",
+                "base_url": self._llm_proxy_url,
+            }
+            self._client_kwargs = client_kwargs
+            self.api_key = "proxy-mode"
+            self.client = None  # No direct client - use _call_llm_proxy()
+            self._anthropic_client = None
+            if not self.quiet_mode:
+                print(f"🤖 AI Agent initialized in proxy mode: model={self.model}")
+                print(f"🔗 LLM Proxy URL: {self._llm_proxy_url}")
+                print(f"🔐 Proxy token configured")
+        elif self.api_mode == "anthropic_messages":
             from agent.anthropic_adapter import build_anthropic_client, resolve_anthropic_token
             # Bedrock + Claude → use AnthropicBedrock SDK for full feature parity
             # (prompt caching, thinking budgets, adaptive thinking).
@@ -5008,7 +5058,119 @@ class AIAgent:
 
         return False, has_retried_429
 
+    def _call_llm_proxy(self, api_kwargs: dict):
+        """Call LLM through the proxy when llm_proxy_url is configured.
+
+        This method is used when running in a container, routing all LLM calls
+        through the host's LLM proxy to avoid storing API keys in containers.
+        """
+        import requests
+
+        if not self._llm_proxy_url or not self._llm_proxy_token:
+            raise RuntimeError("LLM proxy URL or token not configured")
+
+        # Determine provider from model name or base_url
+        model = api_kwargs.get("model", self.model) or ""
+        provider = "dashscope"  # Default for Chinese users (most common with DASHSCOPE_API_KEY)
+
+        # Check model name patterns to determine provider
+        model_lower = model.lower() if model else ""
+
+        # DashScope / Qwen models
+        if any(x in model_lower for x in ["qwen", "dashscope", "tongyi"]):
+            provider = "dashscope"
+        # OpenAI models
+        elif any(x in model_lower for x in ["gpt", "openai", "o1", "o3", "o4"]):
+            provider = "openai"
+        # Anthropic models
+        elif any(x in model_lower for x in ["claude", "anthropic"]):
+            provider = "anthropic"
+
+        # Build proxy request payload
+        proxy_payload = {
+            "provider": provider,
+            "model": model,
+            "messages": api_kwargs.get("messages", []),
+            "max_tokens": api_kwargs.get("max_tokens", 4096),
+            "user_id": self._user_id or "unknown",
+        }
+
+        if "system" in api_kwargs:
+            proxy_payload["system"] = api_kwargs["system"]
+        if "tools" in api_kwargs:
+            proxy_payload["tools"] = api_kwargs["tools"]
+        if "tool_choice" in api_kwargs:
+            proxy_payload["tool_choice"] = api_kwargs["tool_choice"]
+
+        headers = {
+            "Authorization": f"Bearer {self._llm_proxy_token}",
+            "Content-Type": "application/json",
+        }
+
+        # Log proxy call for debugging (API mode)
+        if self.quiet_mode:
+            logger.info(f"Calling LLM proxy: url={self._llm_proxy_url}/invoke, provider={provider}, model={model}")
+
+        try:
+            response = requests.post(
+                f"{self._llm_proxy_url}/invoke",
+                headers=headers,
+                json=proxy_payload,
+                timeout=120,
+            )
+
+            if response.status_code != 200:
+                logger.error(f"Proxy error: {response.status_code} - {response.text}")
+                raise RuntimeError(f"Proxy error: {response.status_code} - {response.text}")
+
+            data = response.json()
+
+            if not data.get("success"):
+                logger.error(f"Proxy call failed: {data.get('error', 'Unknown error')}")
+                raise RuntimeError(f"Proxy call failed: {data.get('error', 'Unknown error')}")
+
+            # Convert proxy response to Anthropic-style response object
+            # The agent expects a response with content blocks
+            content_blocks = []
+
+            if data.get("content"):
+                content_blocks.append({
+                    "type": "text",
+                    "text": data["content"],
+                })
+
+            if data.get("tool_calls"):
+                for tc in data["tool_calls"]:
+                    content_blocks.append({
+                        "type": "tool_use",
+                        "id": tc.get("id", f"toolu_{uuid.uuid4().hex[:24]}"),
+                        "name": tc.get("name"),
+                        "input": tc.get("input", {}),
+                    })
+
+            # Log success (API mode)
+            if self.quiet_mode:
+                logger.info(f"Proxy call success: content_len={len(data.get('content') or '')}, tool_calls={len(data.get('tool_calls') or [])}")
+
+            # Create a response object that mimics Anthropic's response
+            return SimpleNamespace(
+                id=f"msg_{uuid.uuid4().hex[:24]}",
+                content=content_blocks,
+                model=model,
+                role="assistant",
+                stop_reason=data.get("stop_reason", "end_turn"),
+                usage=data.get("usage", {"input_tokens": 0, "output_tokens": 0}),
+            )
+
+        except requests.RequestException as e:
+            logger.error(f"Proxy request failed: {e}")
+            raise RuntimeError(f"Proxy request failed: {e}")
+
     def _anthropic_messages_create(self, api_kwargs: dict):
+        # If LLM proxy is configured, use it instead of direct API call
+        if self._llm_proxy_url and self._llm_proxy_token:
+            return self._call_llm_proxy(api_kwargs)
+
         if self.api_mode == "anthropic_messages":
             self._try_refresh_anthropic_client_credentials()
         return self._anthropic_client.messages.create(**api_kwargs)
@@ -5032,7 +5194,10 @@ class AIAgent:
 
         def _call():
             try:
-                if self.api_mode == "codex_responses":
+                # If LLM proxy is configured, route all calls through proxy
+                if self._llm_proxy_url and self._llm_proxy_token:
+                    result["response"] = self._call_llm_proxy(api_kwargs)
+                elif self.api_mode == "codex_responses":
                     request_client_holder["client"] = self._create_request_openai_client(reason="codex_stream_request")
                     result["response"] = self._run_codex_stream(
                         api_kwargs,
@@ -7361,6 +7526,7 @@ class AIAgent:
                 session_id=self.session_id or "",
                 enabled_tools=list(self.valid_tool_names) if self.valid_tool_names else None,
                 skip_pre_tool_call_hook=True,
+                user_container=self._user_container,
             )
 
     @staticmethod
@@ -7926,6 +8092,7 @@ class AIAgent:
                         session_id=self.session_id or "",
                         enabled_tools=list(self.valid_tool_names) if self.valid_tool_names else None,
                         skip_pre_tool_call_hook=True,
+                        user_container=self._user_container,
                     )
                     _spinner_result = function_result
                 except Exception as tool_error:
@@ -7946,6 +8113,7 @@ class AIAgent:
                         session_id=self.session_id or "",
                         enabled_tools=list(self.valid_tool_names) if self.valid_tool_names else None,
                         skip_pre_tool_call_hook=True,
+                        user_container=self._user_container,
                     )
                 except Exception as tool_error:
                     function_result = f"Error executing tool '{function_name}': {tool_error}"
@@ -11410,6 +11578,7 @@ class AIAgent:
 
 def main(
     query: str = None,
+    message: str = None,  # Alias for query (used by container mode)
     model: str = "",
     api_key: str = None,
     base_url: str = "",
@@ -11420,7 +11589,13 @@ def main(
     save_trajectories: bool = False,
     save_sample: bool = False,
     verbose: bool = False,
-    log_prefix_chars: int = 20
+    log_prefix_chars: int = 20,
+    llm_proxy_url: str = None,  # LLM proxy URL (for containerized agents)
+    llm_proxy_token: str = None,  # LLM proxy auth token
+    user_id: str = None,  # User ID for session isolation
+    platform: str = "cli",  # Platform identifier (cli, api, telegram, etc.)
+    session_id: str = None,  # Session ID for conversation continuity
+    skill_id: str = None,  # Skill ID to use
 ):
     """
     Main function for running the agent directly.
@@ -11444,9 +11619,13 @@ def main(
     Toolset Examples:
         - "research": Web search, extract, crawl + vision tools
     """
-    print("🤖 AI Agent with Tool Calling")
-    print("=" * 50)
-    
+    # Suppress all output in API/container mode
+    is_api_mode = platform == "api"
+
+    if not is_api_mode:
+        print("🤖 AI Agent with Tool Calling")
+        print("=" * 50)
+
     # Handle tool listing
     if list_tools:
         from model_tools import get_all_tool_names, get_toolset_for_tool, get_available_toolsets
@@ -11533,16 +11712,18 @@ def main(
     # Parse toolset selection arguments
     enabled_toolsets_list = None
     disabled_toolsets_list = None
-    
+
     if enabled_toolsets:
         enabled_toolsets_list = [t.strip() for t in enabled_toolsets.split(",")]
-        print(f"🎯 Enabled toolsets: {enabled_toolsets_list}")
-    
+        if not is_api_mode:
+            print(f"🎯 Enabled toolsets: {enabled_toolsets_list}")
+
     if disabled_toolsets:
         disabled_toolsets_list = [t.strip() for t in disabled_toolsets.split(",")]
-        print(f"🚫 Disabled toolsets: {disabled_toolsets_list}")
-    
-    if save_trajectories:
+        if not is_api_mode:
+            print(f"🚫 Disabled toolsets: {disabled_toolsets_list}")
+
+    if save_trajectories and not is_api_mode:
         print("💾 Trajectory saving: ENABLED")
         print("   - Successful conversations → trajectory_samples.jsonl")
         print("   - Failed conversations → failed_trajectories.jsonl")
@@ -11558,24 +11739,65 @@ def main(
             disabled_toolsets=disabled_toolsets_list,
             save_trajectories=save_trajectories,
             verbose_logging=verbose,
-            log_prefix_chars=log_prefix_chars
+            log_prefix_chars=log_prefix_chars,
+            llm_proxy_url=llm_proxy_url,
+            llm_proxy_token=llm_proxy_token,
+            platform=platform,
+            session_id=session_id,
+            quiet_mode=is_api_mode,  # Suppress output in API mode
         )
+        if user_id:
+            agent._user_id = user_id
+        # Handle skill_id - store for potential use in conversation
+        if skill_id:
+            agent._skill_id = skill_id
     except RuntimeError as e:
-        print(f"❌ Failed to initialize agent: {e}")
+        if not is_api_mode:
+            print(f"❌ Failed to initialize agent: {e}")
+        else:
+            # In API mode, output error as JSON
+            print(json.dumps({"content": None, "error": str(e), "completed": False}))
         return
-    
-    # Use provided query or default to Python 3.13 example
-    if query is None:
+
+    # Use provided query/message or default to Python 3.13 example
+    # message is an alias for query (used by container mode)
+    effective_query = query or message
+    if effective_query is None:
         user_query = (
             "Tell me about the latest developments in Python 3.13 and what new features "
             "developers should know about. Please search for current information and try it out."
         )
     else:
-        user_query = query
-    
+        user_query = effective_query
+
+    # For API/container mode, output JSON directly
+    if platform == "api":
+        result = agent.run_conversation(user_query)
+        # Output JSON for container to parse
+        output = {
+            "content": result.get("final_response"),
+            "session_id": session_id or agent._session_id,
+            "completed": result.get("completed", False),
+            "api_calls": result.get("api_calls", 0),
+            "tool_calls": [],
+            "error": result.get("error"),  # Include error if present
+            "model": result.get("model"),
+            "provider": result.get("provider"),
+        }
+        # Extract tool calls from messages
+        for msg in result.get("messages", []):
+            if msg.get("role") == "tool":
+                output["tool_calls"].append({
+                    "name": msg.get("name"),
+                    "content": msg.get("content"),
+                })
+        print(json.dumps(output, ensure_ascii=False))
+        return
+
+    # CLI mode: print formatted output
     print(f"\n📝 User Query: {user_query}")
     print("\n" + "=" * 50)
-    
+
     # Run conversation
     result = agent.run_conversation(user_query)
     

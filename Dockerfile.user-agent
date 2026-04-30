@@ -1,0 +1,47 @@
+# Hermes User Agent Container Image
+#
+# This image is used for per-user isolation in enterprise deployment.
+# Each user gets a dedicated container running this image for shell execution.
+#
+# Features:
+# - Python 3.11 + Node.js 20 for common development tasks
+# - Git, curl, wget, vim, jq, sqlite3 for command-line tools
+# - Minimal footprint, fast startup
+#
+# Build: docker build -t hermes-user-agent:latest -f Dockerfile.user-agent .
+#
+# Security: Run with --cap-drop ALL --security-opt no-new-privileges
+
+# Use official Python image (more widely available)
+FROM python:3.11-slim
+
+LABEL maintainer="Hermes Agent"
+LABEL description="User isolation container for Hermes Agent enterprise deployment"
+
+# Install Node.js and common command-line tools
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    wget \
+    git \
+    vim \
+    jq \
+    sqlite3 \
+    procps \
+    htop \
+    tree \
+    zip \
+    unzip \
+    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create Hermes directory structure inside container
+RUN mkdir -p /root/.hermes/memories \
+    && mkdir -p /root/.hermes/skills/private \
+    && mkdir -p /workspace
+
+# Set workspace as default directory
+WORKDIR /workspace
+
+# Keep container running (agent sends commands via docker exec)
+CMD ["sleep", "infinity"]

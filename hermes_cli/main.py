@@ -5089,9 +5089,9 @@ For more help on a command:
     gateway_subparsers.add_parser("setup", help="Configure messaging platforms")
 
     gateway_parser.set_defaults(func=cmd_gateway)
-    
-    # =========================================================================
-    # setup command
+
+# =========================================================================
+# setup command
     # =========================================================================
     setup_parser = subparsers.add_parser(
         "setup",

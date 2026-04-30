@@ -7,6 +7,7 @@ import logging
 import os
 import threading
 from pathlib import Path
+from typing import Optional, Any
 from tools.binary_extensions import has_binary_extension
 from tools.file_operations import ShellFileOperations
 from agent.redact import redact_sensitive_text
@@ -149,16 +150,23 @@ _read_tracker_lock = threading.Lock()
 _read_tracker: dict = {}
 
 
-def _get_file_ops(task_id: str = "default") -> ShellFileOperations:
+def _get_file_ops(task_id: str = "default", user_container: Optional[Any] = None) -> ShellFileOperations:
     """Get or create ShellFileOperations for a terminal environment.
 
     Respects the TERMINAL_ENV setting -- if the task_id doesn't have an
     environment yet, creates one using the configured backend (local, docker,
     modal, etc.) rather than always defaulting to local.
 
+    If user_container is provided (API mode), use it directly instead of
+    creating a new environment.
+
     Thread-safe: uses the same per-task creation locks as terminal_tool to
     prevent duplicate sandbox creation from concurrent tool calls.
     """
+    # Fast path: use user_container directly if provided (API mode)
+    if user_container is not None:
+        return ShellFileOperations(user_container)
+
     from tools.terminal_tool import (
         _active_environments, _env_lock, _create_environment,
         _get_env_config, _last_activity, _start_cleanup_thread,
@@ -279,7 +287,7 @@ def clear_file_ops_cache(task_id: str = None):
             _file_ops_cache.clear()
 
 
-def read_file_tool(path: str, offset: int = 1, limit: int = 500, task_id: str = "default") -> str:
+def read_file_tool(path: str, offset: int = 1, limit: int = 500, task_id: str = "default", user_container: Optional[Any] = None) -> str:
     """Read a file with pagination and line numbers."""
     try:
         # ── Device path guard ─────────────────────────────────────────
@@ -357,7 +365,7 @@ def read_file_tool(path: str, offset: int = 1, limit: int = 500, task_id: str = 
                 pass  # stat failed — fall through to full read
 
         # ── Perform the read ──────────────────────────────────────────
-        file_ops = _get_file_ops(task_id)
+        file_ops = _get_file_ops(task_id, user_container)
         result = file_ops.read_file(path, offset, limit)
         result_dict = result.to_dict()
 
@@ -538,14 +546,14 @@ def _check_file_staleness(filepath: str, task_id: str) -> str | None:
     return None
 
 
-def write_file_tool(path: str, content: str, task_id: str = "default") -> str:
+def write_file_tool(path: str, content: str, task_id: str = "default", user_container: Optional[Any] = None) -> str:
     """Write content to a file."""
     sensitive_err = _check_sensitive_path(path)
     if sensitive_err:
         return tool_error(sensitive_err)
     try:
         stale_warning = _check_file_staleness(path, task_id)
-        file_ops = _get_file_ops(task_id)
+        file_ops = _get_file_ops(task_id, user_container)
         result = file_ops.write_file(path, content)
         result_dict = result.to_dict()
         if stale_warning:
@@ -564,7 +572,7 @@ def write_file_tool(path: str, content: str, task_id: str = "default") -> str:
 
 def patch_tool(mode: str = "replace", path: str = None, old_string: str = None,
                new_string: str = None, replace_all: bool = False, patch: str = None,
-               task_id: str = "default") -> str:
+               task_id: str = "default", user_container: Optional[Any] = None) -> str:
     """Patch a file using replace mode or V4A patch format."""
     # Check sensitive paths for both replace (explicit path) and V4A patch (extract paths)
     _paths_to_check = []
@@ -586,8 +594,8 @@ def patch_tool(mode: str = "replace", path: str = None, old_string: str = None,
             if _sw:
                 stale_warnings.append(_sw)
 
-        file_ops = _get_file_ops(task_id)
-        
+        file_ops = _get_file_ops(task_id, user_container)
+
         if mode == "replace":
             if not path:
                 return tool_error("path required")
@@ -622,7 +630,7 @@ def patch_tool(mode: str = "replace", path: str = None, old_string: str = None,
 def search_tool(pattern: str, target: str = "content", path: str = ".",
                 file_glob: str = None, limit: int = 50, offset: int = 0,
                 output_mode: str = "content", context: int = 0,
-                task_id: str = "default") -> str:
+                task_id: str = "default", user_container: Optional[Any] = None) -> str:
     """Search for content or files."""
     try:
         # Track searches to detect *consecutive* repeated search loops.
@@ -659,7 +667,7 @@ def search_tool(pattern: str, target: str = "content", path: str = ".",
                 "already_searched": count,
             }, ensure_ascii=False)
 
-        file_ops = _get_file_ops(task_id)
+        file_ops = _get_file_ops(task_id, user_container)
         result = file_ops.search(
             pattern=pattern, path=path, target=target, file_glob=file_glob,
             limit=limit, offset=offset, output_mode=output_mode, context=context
@@ -766,20 +774,37 @@ SEARCH_FILES_SCHEMA = {
 
 def _handle_read_file(args, **kw):
     tid = kw.get("task_id") or "default"
-    return read_file_tool(path=args.get("path", ""), offset=args.get("offset", 1), limit=args.get("limit", 500), task_id=tid)
+    return read_file_tool(
+        path=args.get("path", ""),
+        offset=args.get("offset", 1),
+        limit=args.get("limit", 500),
+        task_id=tid,
+        user_container=kw.get("user_container"),
+    )
 
 
 def _handle_write_file(args, **kw):
     tid = kw.get("task_id") or "default"
-    return write_file_tool(path=args.get("path", ""), content=args.get("content", ""), task_id=tid)
+    return write_file_tool(
+        path=args.get("path", ""),
+        content=args.get("content", ""),
+        task_id=tid,
+        user_container=kw.get("user_container"),
+    )
 
 
 def _handle_patch(args, **kw):
     tid = kw.get("task_id") or "default"
     return patch_tool(
-        mode=args.get("mode", "replace"), path=args.get("path"),
-        old_string=args.get("old_string"), new_string=args.get("new_string"),
-        replace_all=args.get("replace_all", False), patch=args.get("patch"), task_id=tid)
+        mode=args.get("mode", "replace"),
+        path=args.get("path"),
+        old_string=args.get("old_string"),
+        new_string=args.get("new_string"),
+        replace_all=args.get("replace_all", False),
+        patch=args.get("patch"),
+        task_id=tid,
+        user_container=kw.get("user_container"),
+    )
 
 
 def _handle_search_files(args, **kw):
@@ -788,9 +813,17 @@ def _handle_search_files(args, **kw):
     raw_target = args.get("target", "content")
     target = target_map.get(raw_target, raw_target)
     return search_tool(
-        pattern=args.get("pattern", ""), target=target, path=args.get("path", "."),
-        file_glob=args.get("file_glob"), limit=args.get("limit", 50), offset=args.get("offset", 0),
-        output_mode=args.get("output_mode", "content"), context=args.get("context", 0), task_id=tid)
+        pattern=args.get("pattern", ""),
+        target=target,
+        path=args.get("path", "."),
+        file_glob=args.get("file_glob"),
+        limit=args.get("limit", 50),
+        offset=args.get("offset", 0),
+        output_mode=args.get("output_mode", "content"),
+        context=args.get("context", 0),
+        task_id=tid,
+        user_container=kw.get("user_container"),
+    )
 
 
 registry.register(name="read_file", toolset="file", schema=READ_FILE_SCHEMA, handler=_handle_read_file, check_fn=_check_file_reqs, emoji="📖", max_result_size_chars=float('inf'))

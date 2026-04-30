@@ -276,7 +276,33 @@ TOOLSETS = {
         ],
         "includes": []
     },
-    
+
+    "hermes-api-server-user": {
+        "description": "User container isolation mode — safer toolset for multi-user deployment. Terminal commands run in isolated Docker containers per user.",
+        "tools": [
+            # Web (safe - no host access)
+            "web_search", "web_extract",
+            # Terminal (isolated in user container)
+            "terminal", "process",
+            # File manipulation (isolated in user container)
+            "read_file", "write_file", "patch", "search_files",
+            # Vision + image generation (safe)
+            "vision_analyze", "image_generate",
+            # Skills (view only - no management for user containers)
+            "skills_list", "skill_view",
+            # Browser automation (safe)
+            "browser_navigate", "browser_snapshot", "browser_click",
+            "browser_type", "browser_scroll", "browser_back",
+            "browser_press", "browser_get_images",
+            "browser_vision", "browser_console",
+            # Planning & memory (user-specific)
+            "todo", "memory",
+            # Session history search (user-specific)
+            "session_search",
+        ],
+        "includes": []
+    },
+
     "hermes-cli": {
         "description": "Full interactive CLI toolset - all default tools plus cronjob management",
         "tools": _HERMES_CORE_TOOLS,

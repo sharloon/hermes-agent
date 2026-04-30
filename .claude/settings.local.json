@@ -29,7 +29,12 @@
       "Bash(find \"\\\\\\\\wsl.localhost\\\\Ubuntu-24.04\\\\home\\\\sharloon\\\\.hermes\\\\skills\" -name \"SKILL.md\")",
       "Bash(sqlite3 *)",
       "Bash(wslpath *)",
-      "Bash(cd \"\\\\\\\\wsl.localhost\\\\Ubuntu-24.04\\\\home\\\\sharloon\\\\hermes-agent\\\\\\\\web\")"
+      "Bash(cd \"\\\\\\\\wsl.localhost\\\\Ubuntu-24.04\\\\home\\\\sharloon\\\\hermes-agent\\\\\\\\web\")",
+      "Bash(cd \"\\\\\\\\wsl.localhost\\\\Ubuntu-24.04\\\\home\\\\sharloon\\\\hermes-agent\")",
+      "Bash(sudo service *)",
+      "Read(//c/Users/sharloon/.hermes/**)",
+      "Read(//c/Users/sharloon/**)",
+      "Bash(docker version *)"
     ]
   }
 }

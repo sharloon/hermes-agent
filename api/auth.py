@@ -1,6 +1,7 @@
 """Authentication endpoints: register, login, token refresh."""
 
 import datetime
+import logging
 import uuid
 from typing import Optional
 
@@ -14,6 +15,7 @@ from hermes_state import UserDataDB
 from api.deps import get_user_db, SECRET_KEY, ALGORITHM
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 def _hash_password(password: str) -> str:
@@ -112,7 +114,10 @@ def login(
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: UserDataDB = Depends(get_user_db),
 ):
-    """Login with email (username field) and password."""
+    """Login with email (username field) and password.
+
+    Also creates/ensures user container for Docker isolation.
+    """
     user = db.get_user_by_email(form_data.username.lower().strip())
     if not user or not _verify_password(form_data.password, user["password_hash"]):
         raise HTTPException(
@@ -122,6 +127,38 @@ def login(
         )
     if not user["is_active"]:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Account disabled")
+
+    # Create user container for isolation (background, non-blocking)
+    try:
+        from api.user_containers import get_or_create_user_container, _USER_CONTAINERS
+        # Start container creation in background thread to not block login response
+        import threading
+
+        def create_container_with_logging():
+            try:
+                container = get_or_create_user_container(user["id"])
+                msg = f"[OK] User container created for {user['id']}: {container.container_id[:12] if container.container_id else 'unknown'}"
+                print(msg)  # Force print to console for visibility
+                logger.info(msg)
+            except Exception as e:
+                msg = f"[ERROR] Failed to create user container for {user['id']}: {e}"
+                print(msg)  # Force print to console for visibility
+                logger.error(msg, exc_info=True)
+
+        threading.Thread(
+            target=create_container_with_logging,
+            daemon=True,
+        ).start()
+    except ImportError as e:
+        msg = f"[ERROR] Cannot import user_containers module: {e}"
+        print(msg)
+        logger.error(msg)
+    except Exception as e:
+        # Log but don't fail login if container creation fails
+        msg = f"[WARN] Failed to setup container creation: {e}"
+        print(msg)
+        logger.warning(msg, exc_info=True)
+
     return _token_pair(user["id"])
 
 
